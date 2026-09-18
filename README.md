@@ -82,6 +82,7 @@ Nova 默认**不会**写入不存在的 `model_catalog_json`，避免 Codex 启�
 ~/.codex-relay/official-model
 ~/.codex-relay/language
 ~/.codex-relay/secrets/      # 当前用户自己的各中转站 API Key
+~/.codex-relay/overrides/    # 当前用户自己的模型 / endpoint 覆盖
 ~/.codex-relay/backups/
 ```
 
@@ -377,25 +378,95 @@ userC → 中文
 /usr/local/bin/codex-relay
 ```
 
-## Provider 管理
+## CC-Switch 风格中转站管理
+
+打开交互式中转站管理器：
+
+```bash
+cr providers
+```
+
+也可以在：
+
+```bash
+cr menu
+```
+
+中选择 **[16] 中转站管理**。
+
+列表会显示当前激活中转站、模型以及 API Key 是否已经配置。进入某个中转站后可以直接：
+
+- 切换并启动 Codex
+- 修改当前用户的默认模型
+- 修改当前用户的 API 地址
+- 设置 / 更新当前用户自己的 API Key
+- 无代理 HTTPS 测速
+- DNS / HTTPS 网络诊断
+- 重置当前用户的模型 / endpoint 修改
+- 删除自定义中转站
+
+例如只修改当前用户的 Nova 默认模型：
+
+```bash
+cr model nova gpt-5.6
+```
+
+只修改当前用户看到的 Nova endpoint：
+
+```bash
+cr endpoint nova https://example.com
+```
+
+测速：
+
+```bash
+cr speed nova
+cr speed baibai
+```
+
+这些修改不会写进全局的 `/usr/local/bin/codex-relay`，而是保存在当前用户自己的：
+
+```text
+~/.codex-relay/overrides/nova.conf
+~/.codex-relay/overrides/baibai.conf
+~/.codex-relay/overrides/<自定义中转站>.conf
+```
+
+因此同一台服务器可以出现：
+
+```text
+userA: Nova → gpt-5.5
+userB: Nova → gpt-5.6
+userC: Nova → 另一个兼容 endpoint
+```
+
+互相不影响。
+
+内置的 `nova` / `baibai` 可以按用户修改模型、endpoint 和 Key，但不能删除。自定义中转站可以在 `cr providers` 中直接添加和删除；新增时可以立即保存该用户自己的 API Key。
+
+命令行仍然保留：
 
 ```bash
 cr list
 cr status
-cr use nova
-cr use baibai
-cr official MODEL
+cr use NAME
+cr switch NAME
+cr model PROFILE MODEL
+cr endpoint PROFILE URL
+cr speed [PROFILE]
 cr add NAME BASE_URL MODEL [PROVIDER_ID] [AUTH]
+cr delete PROFILE
 cr show-config
 ```
 
-`cr use` 会实际更新：
+其中：
 
-```text
-~/.codex/config.toml
-```
+- `cr use NAME`：只切换 `~/.codex/config.toml`
+- `cr switch NAME`：切换配置 + 自动加载这个用户对应的 Key + 启动 Codex
 
-不会创建第二套 `CODEX_HOME`。
+`cr use` / `cr switch` 都使用同一套 `CODEX_HOME`，不会创建第二套 `~/.codex`。
+
+> 正在运行的 Codex 进程不会热加载新的 provider / endpoint / API Key。切换中转站时仍然需要结束当前 Codex 进程并启动新的进程，但 `cr switch PROFILE` 已经把重新配置和重新加载 Key 自动化。
 
 ## 无 VPN / 无代理直连
 
@@ -550,8 +621,9 @@ cr repair-history
 - 新用户不需要访问 GitHub
 - `cr` / `cx` 每个用户在自己的 `~/.bashrc` 中配置
 - `~/.codex/` 只用于 Codex 自己的配置、认证和聊天
-- `~/.codex-relay/` 只用于 Codex-Relay 的状态、profile、语言、API Key 和备份
+- `~/.codex-relay/` 只用于 Codex-Relay 的状态、profile、语言、API Key、用户覆盖和备份
 - `~/.codex-relay/secrets/` 每个用户独立；不同中转站的 Key 也分别保存
+- `~/.codex-relay/overrides/` 每个用户独立；模型和 endpoint 修改不会影响其他用户
 - `~/.codex/auth.json` 每个用户独立，不要互相复制
 - `~/.codex/sessions/` 和 SQLite 聊天数据库每个用户独立
 - `/etc/hosts` 是系统级配置，一次有效修改可以被所有用户共享
@@ -564,6 +636,11 @@ cr menu
 cr language
 cr language zh
 cr language en
+
+cr providers
+cr model nova gpt-5.6
+cr endpoint nova https://example.com
+cr speed nova
 
 cr key
 cr key set nova
