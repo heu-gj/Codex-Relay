@@ -413,7 +413,9 @@ write_config_for_profile() {
         "$P_REASONING" \
         "$P_REVIEW" \
         "$P_GOALS" \
-        "$P_AUTH" <<'PY'
+        "$P_AUTH" \
+        "$name" \
+        "${CODEX_RELAY_BIN:-$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")}" <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -428,6 +430,8 @@ import sys
     review_model,
     goals,
     auth,
+    profile_name,
+    relay_bin,
 ) = sys.argv[1:]
 
 path = Path(config_path)
@@ -447,9 +451,15 @@ managed_root = {
 
 section_re = re.compile(r"^\s*\[([^\]]+)\]\s*(?:#.*)?$")
 key_re = re.compile(r"^\s*([A-Za-z0-9_-]+)\s*=")
-managed_provider_sections = {"model_providers.baibai", "model_providers.OpenAI"}
+managed_provider_sections = {
+    "model_providers.baibai",
+    "model_providers.baibai.auth",
+    "model_providers.OpenAI",
+    "model_providers.OpenAI.auth",
+}
 if kind == "custom":
     managed_provider_sections.add(f"model_providers.{provider}")
+    managed_provider_sections.add(f"model_providers.{provider}.auth")
 
 out = []
 section = None
@@ -537,9 +547,14 @@ if kind == "custom":
     if auth == "openai":
         result.append("requires_openai_auth = true")
     elif auth == "relay":
+        import json
         result.extend([
-            "requires_openai_auth = false",
-            'env_key = "CODEX_RELAY_API_KEY"',
+            "",
+            f"[model_providers.{provider}.auth]",
+            f"command = {json.dumps(relay_bin)}",
+            f"args = [{json.dumps('key-read')}, {json.dumps(profile_name)}]",
+            "timeout_ms = 5000",
+            "refresh_interval_ms = 30000",
         ])
     elif auth.startswith("env:"):
         var = auth.split(":", 1)[1]
@@ -718,6 +733,14 @@ prompt_relay_key() {
 
 ensure_relay_key() {
     relay_key_exists "$1" || prompt_relay_key "$1"
+}
+
+cmd_key_read() {
+    [[ $# -eq 1 ]] || exit 2
+    local file
+    file="$(key_file_for_profile "$1")"
+    [[ -s "$file" ]] || exit 3
+    cat "$file"
 }
 
 cmd_key() {
@@ -2436,6 +2459,8 @@ case "${1:-}" in
         shift; cmd_use "$@" ;;
     switch)
         shift; cmd_switch "$@" ;;
+    key-read)
+        shift; cmd_key_read "$@" ;;
     key|keys)
         shift; cmd_key "$@" ;;
     official)
