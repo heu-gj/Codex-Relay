@@ -2308,7 +2308,8 @@ usage() {
         cat <<EOF
 
 ${UI_BOLD}Quick start${UI_RESET}
-  cr menu                     Open control center
+  cr                          Open provider manager
+  cr menu                     Open full control center
   cr switch nova              Switch + load Nova key + launch
   cr switch baibai            Switch + load baibai key + launch
   cr use nova                 Switch config.toml → Nova
@@ -2366,7 +2367,8 @@ EOF
         cat <<EOF
 
 ${UI_BOLD}快速开始${UI_RESET}
-  cr menu                     打开控制中心
+  cr                          打开中转站管理器
+  cr menu                     打开完整控制中心
   cr switch nova              切换 + 自动加载 Nova Key + 启动
   cr switch baibai            切换 + 自动加载 baibai Key + 启动
   cr use nova                 仅切换 config.toml → Nova
@@ -2480,7 +2482,9 @@ case "${1:-}" in
         shift; cmd_repair_history "$@" ;;
     language|lang)
         shift; cmd_language "$@" ;;
-    help|-h|--help|"")
+    "")
+        cmd_providers ;;
+    help|-h|--help)
         usage ;;
     *)
         if [[ "$RELAY_LANG" == "en" ]]; then
