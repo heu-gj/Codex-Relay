@@ -55,7 +55,43 @@ goals = true
 
 Nova 默认**不会**写入不存在的 `model_catalog_json`，避免 Codex 启动时报 `No such file or directory`。
 
-## 一键安装
+## 推荐安装方式：全局程序 + 每用户独立配置
+
+多人服务器推荐只维护一份主程序：
+
+```text
+/usr/local/bin/codex-relay
+```
+
+每个用户仍然使用自己的：
+
+```text
+~/.codex/config.toml
+~/.codex/auth.json
+~/.codex/sessions/
+~/.codex/state_5.sqlite
+```
+
+这样升级一次，全服务器用户都会使用新版本，但认证、配置和聊天记录不会互相混用。
+
+### 1. 管理员：全局安装 / 更新
+
+管理员执行一次：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/heu-gj/Codex-Relay/main/install.sh \
+  | sudo bash -s -- --global
+```
+
+它会下载最新主程序，先执行 Bash 语法检查，然后安装或覆盖：
+
+```text
+/usr/local/bin/codex-relay
+```
+
+以后 GitHub 更新后，管理员再次执行同一条命令即可全局升级。
+
+### 2. 每个普通用户：初始化自己的配置
 
 默认使用 Nova：
 
@@ -69,19 +105,34 @@ curl -fsSL https://raw.githubusercontent.com/heu-gj/Codex-Relay/main/install.sh 
 curl -fsSL https://raw.githubusercontent.com/heu-gj/Codex-Relay/main/install.sh | bash -s -- baibai
 ```
 
-安装器会：
+用户初始化会：
 
-1. 安装 `~/bin/codex-relay`
-2. 配置 `cr` / `cx` 快捷命令
-3. 初始化当前用户自己的 `~/.codex`
-4. 写入默认 profile
-5. 检查 Nova / baibai 的无代理直连能力
+1. 检查全局 `/usr/local/bin/codex-relay` 是否已经安装
+2. 创建/使用当前用户自己的 `~/.codex`
+3. 配置 `cr` / `cx`，并显式指向全局主程序
+4. 写入当前用户的默认 profile
+5. 检查 Nova / baibai 无代理直连状态
 6. 保留当前用户自己的认证和聊天数据
+7. 如果发现旧的 `~/bin/codex-relay`，自动备份改名，避免它抢在全局版本前面
 
-安装完成后重新打开终端，或执行：
+安装完成后执行：
 
 ```bash
 source ~/.bashrc
+```
+
+确认：
+
+```bash
+type -a codex-relay
+alias cr
+alias cx
+```
+
+推荐看到：
+
+```text
+/usr/local/bin/codex-relay
 ```
 
 ## 快速开始
@@ -274,29 +325,40 @@ cr repair-history
 
 它**不会删除原始 `sessions/*.jsonl`**，也不会无条件覆盖已有正常 provider。
 
-## 多用户
+## 多用户结构
 
-推荐管理员把主脚本放到：
-
-```text
-/usr/local/bin/codex-relay
-```
-
-每个 Linux 用户继续使用自己的：
+推荐最终结构：
 
 ```text
-~/.codex/config.toml
-~/.codex/auth.json
-~/.codex/sessions/
-~/.codex/state_5.sqlite
+/usr/local/bin/codex-relay        # 全局共用主程序
+
+/home/userA/.codex/               # userA 独立配置/认证/聊天
+/home/userB/.codex/               # userB 独立配置/认证/聊天
+/home/userC/.codex/               # userC 独立配置/认证/聊天
 ```
 
 因此：
 
-- 管理脚本可以共用
-- `/etc/hosts` 可以全机共用
+- 主程序只维护一份
+- GitHub 更新后只需要管理员执行一次 `--global` 更新
+- `cr` / `cx` 每个用户在自己的 `~/.bashrc` 中配置
 - API 认证不要在用户之间复制
 - 聊天记录默认互相隔离
+- `/etc/hosts` 是系统级配置，一次有效修改可以被所有用户共享
+
+如果旧用户以前安装过：
+
+```text
+~/bin/codex-relay
+```
+
+重新执行用户初始化时会把它备份成类似：
+
+```text
+~/bin/codex-relay.user-backup.20260918-193000
+```
+
+从而避免 PATH 继续优先命中旧用户版。
 
 ## 常用命令速查
 
