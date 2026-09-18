@@ -72,68 +72,140 @@ Nova 默认**不会**写入不存在的 `model_catalog_json`，避免 Codex 启�
 ~/.codex/state_5.sqlite
 ```
 
-这样升级一次，全服务器用户都会使用新版本，但认证、配置和聊天记录不会互相混用。
+这样管理员只需要维护一份程序；不同用户的 API 认证、配置和聊天记录仍然完全隔离。
 
 ### 1. 管理员：全局安装 / 更新
 
-管理员执行一次：
+#### 推荐方式：通过 GitHub 主站 `git clone`
+
+某些校园网、服务器网络或 DNS 环境可能无法连接 `raw.githubusercontent.com`，但仍然可以访问 `github.com`。这种情况下推荐：
+
+```bash
+rm -rf /tmp/Codex-Relay
+
+git clone --depth=1 \
+  https://github.com/heu-gj/Codex-Relay.git \
+  /tmp/Codex-Relay
+
+bash -n /tmp/Codex-Relay/codex-relay
+
+sudo install -o root -g root -m 755 \
+  /tmp/Codex-Relay/codex-relay \
+  /usr/local/bin/codex-relay
+```
+
+验证：
+
+```bash
+/usr/local/bin/codex-relay help
+```
+
+以后 GitHub 有更新时，管理员重新执行上面这组命令即可。所有用户会立即使用新的全局版本。
+
+#### 可选方式：`raw.githubusercontent.com` 可访问时
+
+如果服务器能正常访问 `raw.githubusercontent.com`，也可以直接：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/heu-gj/Codex-Relay/main/install.sh \
   | sudo bash -s -- --global
 ```
 
-它会下载最新主程序，先执行 Bash 语法检查，然后安装或覆盖：
+如果看到：
+
+```text
+curl: (7) Failed to connect to raw.githubusercontent.com port 443
+```
+
+不要继续重试这条命令，改用上面的 `git clone` 安装方式。
+
+### 2. 新用户：不需要访问 GitHub
+
+只要管理员已经安装：
 
 ```text
 /usr/local/bin/codex-relay
 ```
 
-以后 GitHub 更新后，管理员再次执行同一条命令即可全局升级。
+新用户第一次登录后**不需要下载或安装 codex-relay**。
 
-### 2. 每个普通用户：初始化自己的配置
+配置快捷命令：
+
+```bash
+cat >> ~/.bashrc <<'EOF'
+
+alias cr='/usr/local/bin/codex-relay'
+alias cx='/usr/local/bin/codex-relay run'
+EOF
+
+source ~/.bashrc
+```
 
 默认使用 Nova：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/heu-gj/Codex-Relay/main/install.sh | bash
+cr use nova
 ```
 
-默认使用 baibai：
+或者使用 baibai：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/heu-gj/Codex-Relay/main/install.sh | bash -s -- baibai
+cr use baibai
 ```
 
-用户初始化会：
-
-1. 检查全局 `/usr/local/bin/codex-relay` 是否已经安装
-2. 创建/使用当前用户自己的 `~/.codex`
-3. 配置 `cr` / `cx`，并显式指向全局主程序
-4. 写入当前用户的默认 profile
-5. 检查 Nova / baibai 无代理直连状态
-6. 保留当前用户自己的认证和聊天数据
-7. 如果发现旧的 `~/bin/codex-relay`，自动备份改名，避免它抢在全局版本前面
-
-安装完成后执行：
+然后启动：
 
 ```bash
-source ~/.bashrc
+cx
 ```
 
-确认：
+确认当前使用的是全局程序：
 
 ```bash
 type -a codex-relay
+command -v codex-relay
 alias cr
 alias cx
 ```
 
-推荐看到：
+推荐结果：
 
 ```text
 /usr/local/bin/codex-relay
 ```
+
+其中：
+
+```bash
+alias cr='/usr/local/bin/codex-relay'
+alias cx='/usr/local/bin/codex-relay run'
+```
+
+### 3. 旧用户从用户级版本迁移到全局版本
+
+如果之前存在：
+
+```text
+~/bin/codex-relay
+```
+
+建议先备份或删除它，避免 PATH 优先命中旧版本：
+
+```bash
+mv ~/bin/codex-relay \
+  ~/bin/codex-relay.user-backup.$(date +%Y%m%d-%H%M%S) \
+  2>/dev/null || true
+
+hash -r
+```
+
+然后把 `cr` / `cx` 明确指向：
+
+```text
+/usr/local/bin/codex-relay
+```
+
+> 重点：程序全局共用，但每个用户的 `~/.codex` 仍然独立。因此不会共享 API Key，也不会串聊天记录。
 
 ## 快速开始
 
@@ -330,35 +402,24 @@ cr repair-history
 推荐最终结构：
 
 ```text
-/usr/local/bin/codex-relay        # 全局共用主程序
+/usr/local/bin/codex-relay        # 全局唯一主程序
 
-/home/userA/.codex/               # userA 独立配置/认证/聊天
-/home/userB/.codex/               # userB 独立配置/认证/聊天
-/home/userC/.codex/               # userC 独立配置/认证/聊天
+/home/userA/.codex/               # userA 独立配置 / 认证 / 聊天
+/home/userB/.codex/               # userB 独立配置 / 认证 / 聊天
+/home/userC/.codex/               # userC 独立配置 / 认证 / 聊天
 ```
 
 因此：
 
-- 主程序只维护一份
-- GitHub 更新后只需要管理员执行一次 `--global` 更新
+- 主程序只维护一份：`/usr/local/bin/codex-relay`
+- GitHub 更新后只需要管理员更新一次
+- 新用户不需要访问 GitHub
 - `cr` / `cx` 每个用户在自己的 `~/.bashrc` 中配置
-- API 认证不要在用户之间复制
-- 聊天记录默认互相隔离
+- `~/.codex/config.toml` 每个用户独立
+- `~/.codex/auth.json` 每个用户独立，不要互相复制
+- `~/.codex/sessions/` 和 SQLite 聊天数据库每个用户独立
 - `/etc/hosts` 是系统级配置，一次有效修改可以被所有用户共享
-
-如果旧用户以前安装过：
-
-```text
-~/bin/codex-relay
-```
-
-重新执行用户初始化时会把它备份成类似：
-
-```text
-~/bin/codex-relay.user-backup.20260918-193000
-```
-
-从而避免 PATH 继续优先命中旧用户版。
+- 如果 `raw.githubusercontent.com` 无法连接，管理员使用 `git clone https://github.com/...` 更新即可
 
 ## 常用命令速查
 
