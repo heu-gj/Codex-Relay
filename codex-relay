@@ -2922,6 +2922,7 @@ ${UI_BOLD}Quick start${UI_RESET}
 ${UI_BOLD}Profiles${UI_RESET}
   cr list
   cr status
+  cr quota                    Show official Codex usage/quota
   cr use NAME
   cr official MODEL
   cr add NAME BASE_URL MODEL [PROVIDER_ID] [AUTH]
@@ -2985,6 +2986,7 @@ ${UI_BOLD}快速开始${UI_RESET}
 ${UI_BOLD}中转站 / Profile${UI_RESET}
   cr list                     查看全部 profile
   cr status                   查看当前状态
+  cr quota                    查看官方 Codex 额度
   cr use NAME                 切换 profile
   cr official MODEL           设置官方 OpenAI 模型
   cr add NAME BASE_URL MODEL [PROVIDER_ID] [AUTH]
@@ -3044,6 +3046,8 @@ case "${1:-}" in
         shift; cmd_list "$@" ;;
     status)
         shift; cmd_status "$@" ;;
+    quota|usage)
+        shift; cmd_quota "$@" ;;
     use)
         shift; cmd_use "$@" ;;
     switch)
