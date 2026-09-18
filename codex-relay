@@ -10,9 +10,11 @@ CURRENT="$RELAY_DIR/current"
 REGISTRY="$RELAY_DIR/relays.tsv"
 OFFICIAL_MODEL_FILE="$RELAY_DIR/official-model"
 LANGUAGE_FILE="$RELAY_DIR/language"
+SECRETS_DIR="$RELAY_DIR/secrets"
 HOSTS_TAG="codex-relay-manager"
 
-mkdir -p "$CODEX_DIR" "$RELAY_DIR" "$RELAY_DIR/backups/config" "$RELAY_DIR/backups/history"
+mkdir -p "$CODEX_DIR" "$RELAY_DIR" "$RELAY_DIR/backups/config" "$RELAY_DIR/backups/history" "$SECRETS_DIR"
+chmod 700 "$RELAY_DIR" "$SECRETS_DIR" 2>/dev/null || true
 
 # 从旧版 ~/.codex 中迁移少量 relay 状态文件。只迁移管理器自己的文件，
 # 不触碰 auth.json、sessions、SQLite 或其他 Codex 数据。
@@ -296,7 +298,7 @@ load_profile() {
             P_URL="https://api.sharesai.xyz/v1"
             P_MODEL="gpt-5.6-sol"
             P_REASONING="xhigh"
-            P_AUTH="openai"
+            P_AUTH="relay"
             ;;
 
         nova)
@@ -305,7 +307,7 @@ load_profile() {
             P_MODEL="gpt-5.5"
             P_REVIEW="gpt-5.5"
             P_GOALS="true"
-            P_AUTH="openai"
+            P_AUTH="relay"
             ;;
 
         official)
@@ -509,6 +511,11 @@ if kind == "custom":
 
     if auth == "openai":
         result.append("requires_openai_auth = true")
+    elif auth == "relay":
+        result.extend([
+            "requires_openai_auth = false",
+            'env_key = "CODEX_RELAY_API_KEY"',
+        ])
     elif auth.startswith("env:"):
         var = auth.split(":", 1)[1]
         result.extend([
@@ -543,6 +550,88 @@ PY
     [[ -n "$P_REASONING" ]] && ui_kv "reasoning" "$P_REASONING"
     [[ -n "$P_URL" ]] && ui_kv "base_url" "$P_URL"
     [[ -n "$backup" ]] && ui_kv "backup" "$backup"
+}
+
+# -----------------------------
+# 每用户 / 每 Profile API Key
+# -----------------------------
+key_file_for_profile() {
+    printf '%s/%s.key' "$SECRETS_DIR" "$1"
+}
+
+relay_key_exists() {
+    [[ -s "$(key_file_for_profile "$1")" ]]
+}
+
+save_relay_key() {
+    local name="$1" key="$2" file tmp
+    [[ -n "$key" ]] || die "$(L 'API Key 不能为空' 'API key cannot be empty')"
+    file="$(key_file_for_profile "$name")"
+    tmp="$(mktemp "$SECRETS_DIR/.key.XXXXXX")"
+    chmod 600 "$tmp"
+    printf '%s' "$key" > "$tmp"
+    mv "$tmp" "$file"
+    chmod 600 "$file" 2>/dev/null || true
+}
+
+read_relay_key() {
+    local file key=""
+    file="$(key_file_for_profile "$1")"
+    [[ -s "$file" ]] || return 1
+    IFS= read -r key < "$file" || true
+    printf '%s' "$key"
+}
+
+prompt_relay_key() {
+    local name="$1" key
+    printf '%s' "$(L "请输入 $name 的 API Key（输入不会显示）: " "Enter API key for $name (hidden): ")"
+    IFS= read -r -s key
+    printf '\n'
+    [[ -n "$key" ]] || die "$(L 'API Key 不能为空' 'API key cannot be empty')"
+    save_relay_key "$name" "$key"
+    ui_ok "$(L "已保存 $name 的 API Key（仅当前用户）" "Saved API key for $name (current user only)")"
+}
+
+ensure_relay_key() {
+    relay_key_exists "$1" || prompt_relay_key "$1"
+}
+
+cmd_key() {
+    local action="${1:-list}" name="${2:-}"
+    case "$action" in
+        set)
+            [[ -n "$name" ]] || die "$(L '用法: cr key set PROFILE' 'Usage: cr key set PROFILE')"
+            load_profile "$name"
+            [[ "$P_AUTH" == "relay" ]] || die "$(L '这个 profile 不是 relay 托管 Key 模式' 'This profile does not use relay-managed keys')"
+            prompt_relay_key "$name"
+            ;;
+        remove|rm|delete)
+            [[ -n "$name" ]] || die "$(L '用法: cr key remove PROFILE' 'Usage: cr key remove PROFILE')"
+            rm -f "$(key_file_for_profile "$name")"
+            ui_ok "$(L "已删除 $name 的本地 API Key" "Removed local API key for $name")"
+            ;;
+        list|status|"")
+            ui_header "$(L 'API KEY 管理' 'API KEY MANAGEMENT')"
+            ui_kv "$(L '密钥目录' 'secret dir')" "$SECRETS_DIR"
+            printf '\n'
+            local p state
+            for p in nova baibai; do
+                if relay_key_exists "$p"; then state="$(L '已设置 ✓' 'SET ✓')"; else state="$(L '未设置' 'NOT SET')"; fi
+                printf '  %-12s %s\n' "$p" "$state"
+            done
+            printf '\n'
+            ui_info "$(L 'Key 不会显示，也不会写入 ~/.codex/config.toml' 'Keys are never displayed or written to ~/.codex/config.toml')"
+            ;;
+        *)
+            die "$(L '用法: cr key [list|set PROFILE|remove PROFILE]' 'Usage: cr key [list|set PROFILE|remove PROFILE]')"
+            ;;
+    esac
+}
+
+cmd_switch() {
+    [[ $# -eq 1 ]] || die "$(L '用法: cr switch PROFILE' 'Usage: cr switch PROFILE')"
+    write_config_for_profile "$1"
+    cmd_run
 }
 
 # -----------------------------
@@ -802,29 +891,51 @@ cmd_run() {
     need codex
     need python3
 
-    local host no_proxy
+    local host no_proxy relay_key=""
     host="$(url_host "$P_URL")"
     no_proxy="127.0.0.1,localhost,::1,$host"
 
-    ui_header "LAUNCH"
-    ui_ok "正在启动 Codex"
+    if [[ "$P_AUTH" == "relay" ]]; then
+        ensure_relay_key "$name"
+        relay_key="$(read_relay_key "$name")"
+    fi
+
+    ui_header "$(L '启动' 'LAUNCH')"
+    ui_ok "$(L '正在启动 Codex' 'Launching Codex')"
     ui_kv "profile" "$name"
     ui_kv "provider" "$P_PROVIDER"
     ui_kv "model" "$P_MODEL"
+    if [[ "$P_AUTH" == "relay" ]]; then
+        ui_kv "api key" "$(L '已加载（当前用户）' 'loaded (current user)')"
+    fi
     ui_kv "proxy" "disabled"
     ui_kv "NO_PROXY" "$no_proxy"
     printf '\n'
 
-    exec env \
-        -u http_proxy \
-        -u https_proxy \
-        -u HTTP_PROXY \
-        -u HTTPS_PROXY \
-        -u all_proxy \
-        -u ALL_PROXY \
-        NO_PROXY="$no_proxy" \
-        no_proxy="$no_proxy" \
-        codex "$@"
+    if [[ "$P_AUTH" == "relay" ]]; then
+        exec env \
+            -u http_proxy \
+            -u https_proxy \
+            -u HTTP_PROXY \
+            -u HTTPS_PROXY \
+            -u all_proxy \
+            -u ALL_PROXY \
+            NO_PROXY="$no_proxy" \
+            no_proxy="$no_proxy" \
+            CODEX_RELAY_API_KEY="$relay_key" \
+            codex "$@"
+    else
+        exec env \
+            -u http_proxy \
+            -u https_proxy \
+            -u HTTP_PROXY \
+            -u HTTPS_PROXY \
+            -u all_proxy \
+            -u ALL_PROXY \
+            NO_PROXY="$no_proxy" \
+            no_proxy="$no_proxy" \
+            codex "$@"
+    fi
 }
 
 # -----------------------------
@@ -855,21 +966,21 @@ cmd_add() {
         echo "用法:"
         echo "  cr add NAME BASE_URL MODEL [PROVIDER_ID] [AUTH]"
         echo
-        echo "AUTH: openai | env:变量名 | none"
+        echo "AUTH: relay | openai | env:变量名 | none"
         exit 1
     }
 
     local name="$1" url="$2" model="$3"
     local provider="${4:-$name}"
-    local auth="${5:-openai}"
+    local auth="${5:-relay}"
 
     [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || die "NAME 格式非法"
     [[ "$provider" =~ ^[A-Za-z0-9_-]+$ ]] || die "PROVIDER_ID 格式非法"
     [[ "$url" =~ ^https?:// ]] || die "BASE_URL 必须以 http:// 或 https:// 开头"
 
     case "$auth" in
-        openai|none|env:*) ;;
-        *) die "AUTH 必须是 openai / env:变量名 / none" ;;
+        relay|openai|none|env:*) ;;
+        *) die "AUTH 必须是 relay / openai / env:变量名 / none" ;;
     esac
 
     local tmp
@@ -1962,6 +2073,10 @@ case "${1:-}" in
         shift; cmd_status "$@" ;;
     use)
         shift; cmd_use "$@" ;;
+    switch)
+        shift; cmd_switch "$@" ;;
+    key|keys)
+        shift; cmd_key "$@" ;;
     official)
         shift; cmd_official "$@" ;;
     add)
