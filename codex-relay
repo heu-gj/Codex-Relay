@@ -877,14 +877,6 @@ ensure_relay_key() {
     relay_key_exists "$1" || prompt_relay_key "$1"
 }
 
-cmd_key_read() {
-    [[ $# -eq 1 ]] || exit 2
-    local file
-    file="$(key_file_for_profile "$1")"
-    [[ -s "$file" ]] || exit 3
-    cat "$file"
-}
-
 cmd_key() {
     local action="${1:-list}" name="${2:-}"
     case "$action" in
@@ -893,10 +885,20 @@ cmd_key() {
             load_profile "$name"
             [[ "$P_AUTH" == "relay" ]] || die "$(L '这个 profile 不是 relay 托管 Key 模式' 'This profile does not use relay-managed keys')"
             prompt_relay_key "$name"
+            if [[ "$(current_profile)" == "$name" ]]; then
+                apply_auth_for_profile "$name"
+                refresh_daemon_after_auth_change
+            fi
             ;;
         remove|rm|delete)
             [[ -n "$name" ]] || die "$(L '用法: cr key remove PROFILE' 'Usage: cr key remove PROFILE')"
             rm -f "$(key_file_for_profile "$name")"
+            if [[ "$(current_profile)" == "$name" && "$(auth_json_mode || true)" == "apikey" ]]; then
+                backup_auth_json
+                rm -f "$AUTH_FILE"
+                AUTH_CHANGED=1
+                refresh_daemon_after_auth_change
+            fi
             ui_ok "$(L "已删除 $name 的本地 API Key" "Removed local API key for $name")"
             ;;
         list|status|"")
@@ -912,7 +914,7 @@ cmd_key() {
                 printf '  %-12s %s\n' "$p" "$state"
             done < <(profile_names)
             printf '\n'
-            ui_info "$(L 'Key 不会显示，也不会写入 ~/.codex/config.toml' 'Keys are never displayed or written to ~/.codex/config.toml')"
+            ui_info "$(L 'Key 不写入 config.toml；激活中转站时会按 Codex 官方格式写入 ~/.codex/auth.json' 'Keys are not written to config.toml; activating a relay writes native Codex auth.json')"
             ;;
         *)
             die "$(L '用法: cr key [list|set PROFILE|remove PROFILE]' 'Usage: cr key [list|set PROFILE|remove PROFILE]')"
@@ -2485,7 +2487,7 @@ ${UI_BOLD}API keys${UI_RESET}
   cr key                      Show key status
   cr key set PROFILE          Save/update this user's key
   cr key remove PROFILE       Remove saved key
-  cr switch PROFILE           Switch + load key + launch
+  cr switch PROFILE           Switch config/auth + launch
 
 ${UI_BOLD}Network${UI_RESET}
   cr check [PROFILE]          DNS / TCP DNS / HTTPS diagnostics
@@ -2524,8 +2526,8 @@ ${UI_BOLD}快速开始${UI_RESET}
   cr menu                     打开完整控制中心
   cr switch nova              切换 + 自动加载 Nova Key + 启动
   cr switch baibai            切换 + 自动加载 baibai Key + 启动
-  cr use nova                 仅切换 config.toml → Nova
-  cx                          使用当前 profile 的 Key 启动 Codex
+  cr use nova                 切换 config.toml + auth.json → Nova
+  cx                          使用当前 profile 启动官方 Codex
 
 ${UI_BOLD}中转站 / Profile${UI_RESET}
   cr list                     查看全部 profile
@@ -2544,7 +2546,7 @@ ${UI_BOLD}API Key${UI_RESET}
   cr key                      查看各中转站 Key 状态
   cr key set PROFILE          保存 / 更新当前用户的 Key
   cr key remove PROFILE       删除保存的 Key
-  cr switch PROFILE           切换 + 自动加载 Key + 启动
+  cr switch PROFILE           切换 config/auth + 启动
 
 ${UI_BOLD}网络${UI_RESET}
   cr check [PROFILE]          DNS / TCP DNS / HTTPS 诊断
@@ -2589,8 +2591,6 @@ case "${1:-}" in
         shift; cmd_use "$@" ;;
     switch)
         shift; cmd_switch "$@" ;;
-    key-read)
-        shift; cmd_key_read "$@" ;;
     key|keys)
         shift; cmd_key "$@" ;;
     official)
