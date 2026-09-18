@@ -1,0 +1,16 @@
+name: Shell syntax check
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  bash-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check codex-relay syntax
+        run: bash -n codex-relay
+      - name: Check installer syntax
+        run: bash -n install.sh
