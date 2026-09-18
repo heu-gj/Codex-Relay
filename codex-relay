@@ -810,6 +810,96 @@ cmd_add_interactive() {
     esac
 }
 
+cmd_provider_detail() {
+    local name="$1" choice v key_state
+    while true; do
+        load_profile "$name"
+        if [[ "$P_AUTH" == "relay" ]]; then
+            if relay_key_exists "$name"; then
+                key_state="$(L '已设置 ✓' 'SET ✓')"
+            else
+                key_state="$(L '未设置' 'NOT SET')"
+            fi
+        else
+            key_state="$(L 'Codex 认证' 'Codex auth')"
+        fi
+
+        clear || true
+        ui_header "$(L '中转站详情' 'PROVIDER DETAILS')"
+        ui_kv "profile" "$name"
+        ui_kv "provider" "$P_PROVIDER"
+        ui_kv "model" "$P_MODEL"
+        ui_kv "endpoint" "$P_URL"
+        ui_kv "API Key" "$key_state"
+        [[ "$(current_profile)" == "$name" ]] && ui_kv "$(L '状态' 'status')" "$(L '当前使用 ●' 'ACTIVE ●')"
+        profile_override_exists "$name" && ui_kv "$(L '个人覆盖' 'override')" "$(L '是' 'yes')"
+
+        printf '\n'
+        ui_menu_item "1" "$(L '切换并启动' 'Switch & launch')" ""
+        ui_menu_item "2" "$(L '修改默认模型' 'Edit default model')" "$P_MODEL"
+        [[ "$name" != "official" ]] && ui_menu_item "3" "$(L '修改 API 地址' 'Edit endpoint')" "$P_URL"
+        [[ "$P_AUTH" == "relay" ]] && ui_menu_item "4" "$(L '设置 / 更新 API Key' 'Set / update API key')" "$key_state"
+        ui_menu_item "5" "$(L '测速' 'Speed test')" ""
+        ui_menu_item "6" "$(L '网络诊断' 'Network diagnostics')" ""
+        profile_override_exists "$name" && ui_menu_item "7" "$(L '重置个人修改' 'Reset personal overrides')" ""
+        [[ "$name" != "nova" && "$name" != "baibai" && "$name" != "official" ]] && ui_menu_item "D" "$(L '删除中转站' 'Delete provider')" ""
+        ui_menu_item "0" "$(L '返回' 'Back')" ""
+
+        printf '\n> '
+        read -r choice
+        case "$choice" in
+            1)
+                cmd_switch "$name"
+                ;;
+            2)
+                printf '%s [%s]: ' "$(L '新模型' 'New model')" "$P_MODEL"
+                read -r v
+                [[ -n "$v" ]] && cmd_model "$name" "$v"
+                ui_pause
+                ;;
+            3)
+                [[ "$name" != "official" ]] || continue
+                printf '%s [%s]: ' "$(L '新地址' 'New endpoint')" "$P_URL"
+                read -r v
+                [[ -n "$v" ]] && cmd_endpoint "$name" "$v"
+                ui_pause
+                ;;
+            4)
+                [[ "$P_AUTH" == "relay" ]] && cmd_key set "$name"
+                ui_pause
+                ;;
+            5)
+                cmd_speed "$name" || true
+                ui_pause
+                ;;
+            6)
+                cmd_check "$name" || true
+                ui_pause
+                ;;
+            7)
+                if profile_override_exists "$name"; then
+                    reset_profile_override "$name"
+                    [[ "$(current_profile)" == "$name" ]] && write_config_for_profile "$name"
+                    ui_ok "$(L '已恢复此用户的默认配置' 'Per-user overrides reset')"
+                fi
+                ui_pause
+                ;;
+            d|D)
+                cmd_delete_profile "$name"
+                ui_pause
+                return
+                ;;
+            0|q|Q)
+                return
+                ;;
+            *)
+                ui_warn "$(L '无效选择' 'Invalid choice')"
+                sleep 0.5
+                ;;
+        esac
+    done
+}
+
 # -----------------------------
 # 网络 / 无 VPN 直连
 # -----------------------------
