@@ -554,6 +554,62 @@ ROUTE // BAIBAI
 - 重置当前用户的模型 / endpoint 修改
 - 删除自定义中转站
 
+### 添加自定义中转站向导
+
+在 Route Switcher 中按 `A` 会进入详细的 4 步向导，而不是直接连续询问几个字段。
+
+向导开始时会先说明两个关键约束：
+
+- 自定义中转站按 Codex 的 `wire_api = "responses"` 写入，因此服务商必须支持 **OpenAI Responses API**。
+- 如果服务商只支持 `/chat/completions` 而不支持 `/responses`，不能直接使用这个向导。
+- 向导本身不会自动联网；保存后再用 `cr check PROFILE` 或详情页 `R` 测试网络。
+
+四个步骤分别是：
+
+```text
+STEP 1/4  中转站名称
+  - Codex-Relay 本地名称
+  - 用于 cr switch NAME / cr key set NAME
+  - 允许字母、数字、_、-
+  - nova / baibai / official 是保留名称
+
+STEP 2/4  API 地址
+  - 填服务商提供的 OpenAI 兼容 Base URL
+  - 必须以 http:// 或 https:// 开头
+  - 是否包含 /v1 以服务商文档为准，不自动补全
+  - 公网中转建议使用 HTTPS
+
+STEP 3/4  默认模型
+  - 填服务商实际支持的模型 ID
+  - 例如 gpt-5.5 / gpt-5.6-sol
+  - 模型名称会原样发送给服务商
+
+STEP 4/4  Provider ID
+  - 写入 [model_providers.<ID>]
+  - 如果服务商没有特殊要求，直接回车使用中转站名称
+  - 不是 API Key，也不是模型名
+```
+
+最后会显示完整预览：
+
+```text
+名称
+Provider ID
+默认模型
+Base URL
+认证方式
+```
+
+只有输入 `YES` 或“确认”才会保存。保存完成后会询问是否立即设置 API Key，并显示下一步命令：
+
+```bash
+cr check NAME
+cr use NAME
+cr switch NAME
+```
+
+如果输入的名称已经存在，向导不会直接覆盖，必须额外输入 `OVERWRITE` 或“覆盖”确认。
+
 例如只修改当前用户的 Nova 默认模型：
 
 ```bash
