@@ -2009,9 +2009,10 @@ usage() {
 
 ${UI_BOLD}Quick start${UI_RESET}
   cr menu                     Open control center
+  cr switch nova              Switch + load Nova key + launch
+  cr switch baibai            Switch + load baibai key + launch
   cr use nova                 Switch config.toml → Nova
-  cr use baibai               Switch config.toml → baibai
-  cx                          Launch Codex without proxy
+  cx                          Launch current profile
 
 ${UI_BOLD}Profiles${UI_RESET}
   cr list
@@ -2020,6 +2021,12 @@ ${UI_BOLD}Profiles${UI_RESET}
   cr official MODEL
   cr add NAME BASE_URL MODEL [PROVIDER_ID] [AUTH]
   cr show-config
+
+${UI_BOLD}API keys${UI_RESET}
+  cr key                      Show key status
+  cr key set PROFILE          Save/update this user's key
+  cr key remove PROFILE       Remove saved key
+  cr switch PROFILE           Switch + load key + launch
 
 ${UI_BOLD}Network${UI_RESET}
   cr check [PROFILE]          DNS / TCP DNS / HTTPS diagnostics
@@ -2055,9 +2062,10 @@ EOF
 
 ${UI_BOLD}快速开始${UI_RESET}
   cr menu                     打开控制中心
-  cr use nova                 切换 config.toml → Nova
-  cr use baibai               切换 config.toml → baibai
-  cx                          清除代理后启动 Codex
+  cr switch nova              切换 + 自动加载 Nova Key + 启动
+  cr switch baibai            切换 + 自动加载 baibai Key + 启动
+  cr use nova                 仅切换 config.toml → Nova
+  cx                          使用当前 profile 的 Key 启动 Codex
 
 ${UI_BOLD}中转站 / Profile${UI_RESET}
   cr list                     查看全部 profile
@@ -2066,6 +2074,12 @@ ${UI_BOLD}中转站 / Profile${UI_RESET}
   cr official MODEL           设置官方 OpenAI 模型
   cr add NAME BASE_URL MODEL [PROVIDER_ID] [AUTH]
   cr show-config              查看当前 config.toml
+
+${UI_BOLD}API Key${UI_RESET}
+  cr key                      查看各中转站 Key 状态
+  cr key set PROFILE          保存 / 更新当前用户的 Key
+  cr key remove PROFILE       删除保存的 Key
+  cr switch PROFILE           切换 + 自动加载 Key + 启动
 
 ${UI_BOLD}网络${UI_RESET}
   cr check [PROFILE]          DNS / TCP DNS / HTTPS 诊断
