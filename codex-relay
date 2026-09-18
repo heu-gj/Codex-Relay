@@ -628,6 +628,37 @@ cmd_key() {
     esac
 }
 
+
+cmd_key_menu() {
+    while true; do
+        clear || true
+        ui_header "$(L 'API KEY 管理' 'API KEY MANAGEMENT')"
+        printf '\n'
+        local p state
+        for p in nova baibai; do
+            if relay_key_exists "$p"; then state="$(L '已设置 ✓' 'SET ✓')"; else state="$(L '未设置' 'NOT SET')"; fi
+            ui_kv "$p" "$state"
+        done
+
+        printf '\n'
+        ui_menu_item "1" "$(L '设置 / 更新 Nova Key' 'Set / update Nova key')" ""
+        ui_menu_item "2" "$(L '设置 / 更新 baibai Key' 'Set / update baibai key')" ""
+        ui_menu_item "3" "$(L '删除 Nova Key' 'Remove Nova key')" ""
+        ui_menu_item "4" "$(L '删除 baibai Key' 'Remove baibai key')" ""
+        ui_menu_item "0" "$(L '返回' 'Back')" ""
+        printf '\n%s›%s %s%s%s  ' "$UI_PINK" "$UI_RESET" "$UI_BOLD" "$(L '请选择操作' 'Choose an action')" "$UI_RESET"
+        read -r choice
+        case "$choice" in
+            1) cmd_key set nova; ui_pause ;;
+            2) cmd_key set baibai; ui_pause ;;
+            3) cmd_key remove nova; ui_pause ;;
+            4) cmd_key remove baibai; ui_pause ;;
+            0|q|Q) return ;;
+            *) ui_warn "$(L "无效选择: $choice" "Invalid choice: $choice")"; sleep 0.7 ;;
+        esac
+    done
+}
+
 cmd_switch() {
     [[ $# -eq 1 ]] || die "$(L '用法: cr switch PROFILE' 'Usage: cr switch PROFILE')"
     write_config_for_profile "$1"
@@ -1880,6 +1911,7 @@ cmd_menu() {
         ui_menu_item "11" "$(L 'Profile 列表' 'Profiles')" "providers / endpoints"
         ui_menu_item "12" "$(L '查看 config.toml' 'Show config.toml')" "$(L '当前有效配置' 'effective config')"
         ui_menu_item "14" "$(L '语言设置' 'Language')" "$(L '中文 / English' 'Chinese / English')"
+        ui_menu_item "15" "$(L 'API Key 管理' 'API Key management')" "$(L '每用户 / 每中转站独立' 'per-user / per-provider')"
         ui_menu_item "0" "$(L '退出' 'Exit')" ""
 
         printf '\n%s›%s %s%s%s  ' "$UI_PINK" "$UI_RESET" "$UI_BOLD" "$(L '请选择操作' 'Choose an action')" "$UI_RESET"
@@ -1953,6 +1985,9 @@ cmd_menu() {
                 ;;
             14)
                 cmd_language_menu
+                ;;
+            15)
+                cmd_key_menu
                 ;;
             0|q|Q)
                 printf '\n%s%s%s\n' "$UI_DIM" "$(L '已退出。' 'Goodbye.')" "$UI_RESET"
