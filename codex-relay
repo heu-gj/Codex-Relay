@@ -6,16 +6,19 @@ RELAY_DIR="${CODEX_RELAY_HOME:-$HOME/.codex-relay}"
 
 # Codex 自己的数据只放在 ~/.codex；codex-relay 的状态单独放在 ~/.codex-relay。
 CONFIG="$CODEX_DIR/config.toml"
+AUTH_FILE="$CODEX_DIR/auth.json"
 CURRENT="$RELAY_DIR/current"
 REGISTRY="$RELAY_DIR/relays.tsv"
 OFFICIAL_MODEL_FILE="$RELAY_DIR/official-model"
 LANGUAGE_FILE="$RELAY_DIR/language"
 SECRETS_DIR="$RELAY_DIR/secrets"
+AUTH_DIR="$RELAY_DIR/auth"
+OFFICIAL_AUTH_FILE="$AUTH_DIR/official.json"
 OVERRIDES_DIR="$RELAY_DIR/overrides"
 HOSTS_TAG="codex-relay-manager"
 
-mkdir -p "$CODEX_DIR" "$RELAY_DIR" "$RELAY_DIR/backups/config" "$RELAY_DIR/backups/history" "$SECRETS_DIR" "$OVERRIDES_DIR"
-chmod 700 "$RELAY_DIR" "$SECRETS_DIR" "$OVERRIDES_DIR" 2>/dev/null || true
+mkdir -p "$CODEX_DIR" "$RELAY_DIR" "$RELAY_DIR/backups/config" "$RELAY_DIR/backups/auth" "$RELAY_DIR/backups/history" "$SECRETS_DIR" "$AUTH_DIR" "$OVERRIDES_DIR"
+chmod 700 "$RELAY_DIR" "$SECRETS_DIR" "$AUTH_DIR" "$OVERRIDES_DIR" 2>/dev/null || true
 
 # 从旧版 ~/.codex 中迁移少量 relay 状态文件。只迁移管理器自己的文件，
 # 不触碰 auth.json、sessions、SQLite 或其他 Codex 数据。
