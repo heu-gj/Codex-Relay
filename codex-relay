@@ -1199,45 +1199,80 @@ provider_card() {
 }
 
 cmd_provider_detail() {
-    local name="$1" choice v key_state
+    local name="$1" choice v key_state current network host type_badge status_text model_line
     while true; do
         load_profile "$name"
+        current="$(current_profile)"
+        network="$(provider_cached_network "$name")"
+        host="$(provider_host "$P_URL")"
+        type_badge="$(provider_type_badge "$name")"
+
         if [[ "$P_AUTH" == "relay" ]]; then
             if relay_key_exists "$name"; then
-                key_state="$(L '已设置 ✓' 'SET ✓')"
+                key_state="$(L '✓ 已设置' '✓ SET')"
             else
-                key_state="$(L '未设置' 'NOT SET')"
+                key_state="$(L '✕ 未设置' '✕ NOT SET')"
             fi
         else
-            key_state="$(L 'Codex 认证' 'Codex auth')"
+            key_state="$(L 'Codex 官方认证' 'Codex native auth')"
         fi
 
+        if [[ "$current" == "$name" ]]; then
+            status_text="$(L '● ACTIVE · 当前路由' '● ACTIVE · current route')"
+        else
+            status_text="$(L '○ STANDBY' '○ STANDBY')"
+        fi
+
+        model_line="$P_MODEL"
+        [[ -n "$P_REASONING" ]] && model_line="$model_line · $P_REASONING"
+
         clear || true
-        ui_header "$(L '中转站详情' 'PROVIDER DETAILS')"
+        ui_header "ROUTE // ${name^^}"
+
+        printf '\n  %s%s%s  %b\n' "$UI_BOLD$UI_CYAN" "$status_text" "$UI_RESET" "$type_badge"
+        printf '  %s%s%s\n' "$UI_DIM" "$(L '当前用户独立配置 · 官方 Codex 原生 auth/config' 'Per-user config · native Codex auth/config')" "$UI_RESET"
+
+        ui_section "$(L '路由信息' 'ROUTE')"
         ui_kv "profile" "$name"
         ui_kv "provider" "$P_PROVIDER"
-        ui_kv "model" "$P_MODEL"
-        ui_kv "endpoint" "$P_URL"
+        ui_kv "model" "$model_line"
+        ui_kv "endpoint" "$host"
         ui_kv "API Key" "$key_state"
-        [[ "$(current_profile)" == "$name" ]] && ui_kv "$(L '状态' 'status')" "$(L '当前使用 ●' 'ACTIVE ●')"
-        profile_override_exists "$name" && ui_kv "$(L '个人覆盖' 'override')" "$(L '是' 'yes')"
+        ui_kv "$(L '网络缓存' 'network cache')" "$network"
+        profile_override_exists "$name" && ui_kv "$(L '个人覆盖' 'override')" "$(L '已启用' 'enabled')"
+
+        ui_section "$(L '启动' 'LAUNCH')"
+        ui_menu_item "Enter" "$(L '切换并启动 Codex' 'Switch & launch Codex')" "$name"
+        ui_menu_item "U" "$(L '仅设为当前中转站' 'Use without launching')" "$(L '只更新 config/auth' 'update config/auth only')"
+
+        ui_section "$(L '配置' 'CONFIGURE')"
+        ui_menu_item "2" "$(L '修改默认模型' 'Edit default model')" "$P_MODEL"
+        [[ "$name" != "official" ]] && ui_menu_item "3" "$(L '修改 API 地址' 'Edit endpoint')" "$host"
+        [[ "$P_AUTH" == "relay" ]] && ui_menu_item "4" "$(L '设置 / 更新 API Key' 'Set / update API key')" "$key_state"
+
+        ui_section "$(L '诊断' 'DIAGNOSTICS')"
+        ui_menu_item "R" "$(L '刷新网络状态' 'Refresh network state')" "$network"
+        ui_menu_item "5" "$(L '无代理测速' 'Direct speed test')" ""
+        ui_menu_item "6" "$(L '完整网络诊断' 'Full network diagnostics')" "DNS · TCP DNS · HTTPS"
+
+        if profile_override_exists "$name" || [[ "$name" != "nova" && "$name" != "baibai" && "$name" != "official" ]]; then
+            ui_section "$(L '维护' 'MAINTENANCE')"
+            profile_override_exists "$name" && ui_menu_item "7" "$(L '重置个人修改' 'Reset personal overrides')" ""
+            [[ "$name" != "nova" && "$name" != "baibai" && "$name" != "official" ]] && ui_menu_item "D" "$(L '删除中转站' 'Delete provider')" "$(L '自定义中转站' 'custom provider')"
+        fi
 
         printf '\n'
-        ui_menu_item "1" "$(L '切换并启动' 'Switch & launch')" ""
-        ui_menu_item "2" "$(L '修改默认模型' 'Edit default model')" "$P_MODEL"
-        [[ "$name" != "official" ]] && ui_menu_item "3" "$(L '修改 API 地址' 'Edit endpoint')" "$P_URL"
-        [[ "$P_AUTH" == "relay" ]] && ui_menu_item "4" "$(L '设置 / 更新 API Key' 'Set / update API key')" "$key_state"
-        ui_menu_item "5" "$(L '测速' 'Speed test')" ""
-        ui_menu_item "6" "$(L '网络诊断' 'Network diagnostics')" ""
-        profile_override_exists "$name" && ui_menu_item "7" "$(L '重置个人修改' 'Reset personal overrides')" ""
-        [[ "$name" != "nova" && "$name" != "baibai" && "$name" != "official" ]] && ui_menu_item "D" "$(L '删除中转站' 'Delete provider')" ""
-        ui_menu_item "0" "$(L '返回' 'Back')" ""
-
-        printf '\n> '
+        ui_menu_item "0" "$(L '返回中转站列表' 'Back to providers')" ""
+        printf '\n%s›%s ' "$UI_PINK" "$UI_RESET"
         read -r choice
+
         case "$choice" in
-            1)
+            ""|1)
                 cmd_switch "$name"
+                ;;
+            u|U)
+                cmd_use "$name"
+                ui_pause
                 ;;
             2)
                 printf '%s [%s]: ' "$(L '新模型' 'New model')" "$P_MODEL"
@@ -1256,11 +1291,20 @@ cmd_provider_detail() {
                 [[ "$P_AUTH" == "relay" ]] && cmd_key set "$name"
                 ui_pause
                 ;;
+            r|R)
+                clear || true
+                ui_header "$(L '刷新网络状态' 'REFRESH NETWORK')"
+                refresh_dashboard_network "$name" || true
+                ui_kv "$(L '结果' 'result')" "$(provider_cached_network "$name")"
+                ui_pause
+                ;;
             5)
+                clear || true
                 cmd_speed "$name" || true
                 ui_pause
                 ;;
             6)
+                clear || true
                 cmd_check "$name" || true
                 ui_pause
                 ;;
@@ -1290,41 +1334,67 @@ cmd_provider_detail() {
 
 cmd_providers() {
     local -a ps=()
-    local p choice i mark key_state
+    local p choice i active active_model active_host active_network
     while true; do
         mapfile -t ps < <(profile_names)
+        active="$(current_profile)"
+
+        if profile_exists "$active"; then
+            load_profile "$active"
+            active_model="$P_MODEL"
+            [[ -n "$P_REASONING" ]] && active_model="$active_model · $P_REASONING"
+            active_host="$(provider_host "$P_URL")"
+            active_network="$(provider_cached_network "$active")"
+        else
+            active_model="?"
+            active_host="?"
+            active_network="$(L '未检测' 'not checked')"
+        fi
 
         clear || true
-        ui_header "$(L '中转站管理' 'PROVIDER MANAGER')"
-        printf '\n'
+        ui_header "$(L '路由切换器' 'ROUTE SWITCHER')"
+
+        ui_section "$(L '当前路由' 'ACTIVE ROUTE')"
+        printf '  %s●%s %s%s%s\n' "$UI_GREEN" "$UI_RESET" "$UI_BOLD$UI_CYAN" "${active^^}" "$UI_RESET"
+        printf '    %s%s%s  →  %s  →  %sNET%s %s\n' \
+            "$UI_DIM" "$active_model" "$UI_RESET" "$active_host" \
+            "$UI_BLUE" "$UI_RESET" "$active_network"
+
+        ui_section "$(L '可用中转站' 'PROVIDERS')"
         i=1
         for p in "${ps[@]}"; do
-            load_profile "$p"
-            mark=" "
-            [[ "$(current_profile)" == "$p" ]] && mark="●"
-            if [[ "$P_AUTH" == "relay" ]]; then
-                if relay_key_exists "$p"; then
-                    key_state="Key✓"
-                else
-                    key_state="$(L '无Key' 'NoKey')"
-                fi
-            else
-                key_state="$(L 'Codex认证' 'CodexAuth')"
-            fi
-            ui_menu_item "$i" "$mark $p" "$P_MODEL · $key_state"
+            provider_card "$i" "$p" "$active"
             i=$((i+1))
         done
 
         printf '\n'
-        ui_menu_item "A" "$(L '添加中转站' 'Add provider')" "$(L '地址 / 模型 / Key' 'endpoint / model / key')"
-        ui_menu_item "0" "$(L '返回' 'Back')" ""
-        printf '\n> '
+        ui_rule
+        ui_menu_item "Enter" "$(L '启动当前 Codex' 'Launch current Codex')" "$active"
+        ui_menu_item "A" "$(L '添加中转站' 'Add provider')" "$(L '地址 · 模型 · Key' 'endpoint · model · key')"
+        ui_menu_item "R" "$(L '刷新当前路由网络' 'Refresh active route network')" "$active"
+        ui_menu_item "M" "$(L '打开完整控制中心' 'Open control center')" "cr menu"
+        ui_menu_item "0" "$(L '退出' 'Exit')" ""
+
+        printf '\n%s›%s ' "$UI_PINK" "$UI_RESET"
         read -r choice
 
         case "$choice" in
+            "")
+                cmd_run
+                ;;
             a|A)
                 cmd_add_interactive
                 ui_pause
+                ;;
+            r|R)
+                clear || true
+                ui_header "$(L '刷新当前路由' 'REFRESH ACTIVE ROUTE')"
+                refresh_dashboard_network "$active" || true
+                ui_kv "$(L '网络' 'network')" "$(provider_cached_network "$active")"
+                ui_pause
+                ;;
+            m|M)
+                cmd_menu
                 ;;
             0|q|Q)
                 return
