@@ -2042,8 +2042,8 @@ cmd_check() {
     fi
 
     https_result="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u all_proxy -u ALL_PROXY \
-        curl --noproxy '*' -4 -sS -o /dev/null -w '%{http_code} %{time_total}' \
-        --connect-timeout 4 --max-time 8 "$P_URL" 2>/dev/null || true)"
+        curl --noproxy '*' -sS -o /dev/null -w '%{http_code} %{time_total}' \
+        --connect-timeout 5 --max-time 12 "$P_URL" 2>/dev/null || true)"
 
     code="${https_result%% *}"
     sec="${https_result#* }"
@@ -3303,8 +3303,8 @@ refresh_dashboard_network() {
     load_profile "$name"
 
     result="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u all_proxy -u ALL_PROXY \
-        curl --noproxy '*' -4 -sS -o /dev/null -w '%{http_code} %{time_total}' \
-        --connect-timeout 2 --max-time 3 "$P_URL" 2>/dev/null)" || true
+        curl --noproxy '*' -sS -o /dev/null -w '%{http_code} %{time_total}' \
+        --connect-timeout 5 --max-time 10 "$P_URL" 2>/dev/null)" || true
 
     code="${result%% *}"
     sec="${result#* }"
