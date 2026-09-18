@@ -739,10 +739,13 @@ cmd_key() {
             ui_kv "$(L '密钥目录' 'secret dir')" "$SECRETS_DIR"
             printf '\n'
             local p state
-            for p in nova baibai; do
+            while read -r p; do
+                [[ -n "$p" ]] || continue
+                load_profile "$p"
+                [[ "$P_AUTH" == "relay" ]] || continue
                 if relay_key_exists "$p"; then state="$(L '已设置 ✓' 'SET ✓')"; else state="$(L '未设置' 'NOT SET')"; fi
                 printf '  %-12s %s\n' "$p" "$state"
-            done
+            done < <(profile_names)
             printf '\n'
             ui_info "$(L 'Key 不会显示，也不会写入 ~/.codex/config.toml' 'Keys are never displayed or written to ~/.codex/config.toml')"
             ;;
