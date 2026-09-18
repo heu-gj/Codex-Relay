@@ -1,0 +1,23 @@
+.env
+.env.*
+*.key
+*.pem
+*.token
+auth.json
+
+# Local Codex state
+.codex/
+config.toml
+sessions/
+archived_sessions/
+history-backups/
+config-backups/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Local backups / temp
+*.bak
+*.backup
+*.tmp
+.DS_Store
