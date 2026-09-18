@@ -554,7 +554,7 @@ if kind == "custom":
             f"command = {json.dumps(relay_bin)}",
             f"args = [{json.dumps('key-read')}, {json.dumps(profile_name)}]",
             "timeout_ms = 5000",
-            "refresh_interval_ms = 30000",
+            "refresh_interval_ms = 0",
         ])
     elif auth.startswith("env:"):
         var = auth.split(":", 1)[1]
