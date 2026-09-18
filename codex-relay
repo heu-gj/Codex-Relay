@@ -787,7 +787,12 @@ PY
 restore_official_auth() {
     AUTH_CHANGED=0
     if [[ ! -f "$OFFICIAL_AUTH_FILE" ]]; then
-        ui_warn "$(L '没有保存的官方 Codex 登录；请先使用官方 Codex 登录一次，再切换回来保存' 'No saved official Codex login; sign in with official Codex once before saving it')"
+        if [[ -f "$AUTH_FILE" ]]; then
+            backup_auth_json
+            rm -f "$AUTH_FILE"
+            AUTH_CHANGED=1
+        fi
+        ui_warn "$(L '没有保存的官方 Codex 登录；已移除中转站认证，启动官方 Codex 后请登录一次' 'No saved official Codex login; relay auth was removed. Sign in once after launching official Codex')"
         return 0
     fi
 
@@ -948,7 +953,7 @@ cmd_key_menu() {
 
 cmd_switch() {
     [[ $# -eq 1 ]] || die "$(L '用法: cr switch PROFILE' 'Usage: cr switch PROFILE')"
-    write_config_for_profile "$1"
+    cmd_use "$1"
     cmd_run
 }
 
@@ -1373,51 +1378,37 @@ cmd_run() {
     need codex
     need python3
 
-    local host no_proxy relay_key=""
+    apply_auth_for_profile "$name"
+    refresh_daemon_after_auth_change
+
+    local host no_proxy
     host="$(url_host "$P_URL")"
     no_proxy="127.0.0.1,localhost,::1,$host"
 
-    if [[ "$P_AUTH" == "relay" ]]; then
-        ensure_relay_key "$name"
-        relay_key="$(read_relay_key "$name")"
-    fi
-
     ui_header "$(L '启动' 'LAUNCH')"
-    ui_ok "$(L '正在启动 Codex' 'Launching Codex')"
+    ui_ok "$(L '正在启动官方 Codex' 'Launching official Codex')"
     ui_kv "profile" "$name"
     ui_kv "provider" "$P_PROVIDER"
     ui_kv "model" "$P_MODEL"
     if [[ "$P_AUTH" == "relay" ]]; then
-        ui_kv "api key" "$(L '已加载（当前用户）' 'loaded (current user)')"
+        ui_kv "auth" "$(L 'auth.json · API Key' 'auth.json · API key')"
+    else
+        ui_kv "auth" "$(L 'Codex 官方认证' 'Codex native auth')"
     fi
     ui_kv "proxy" "disabled"
     ui_kv "NO_PROXY" "$no_proxy"
     printf '\n'
 
-    if [[ "$P_AUTH" == "relay" ]]; then
-        exec env \
-            -u http_proxy \
-            -u https_proxy \
-            -u HTTP_PROXY \
-            -u HTTPS_PROXY \
-            -u all_proxy \
-            -u ALL_PROXY \
-            NO_PROXY="$no_proxy" \
-            no_proxy="$no_proxy" \
-            CODEX_RELAY_API_KEY="$relay_key" \
-            codex "$@"
-    else
-        exec env \
-            -u http_proxy \
-            -u https_proxy \
-            -u HTTP_PROXY \
-            -u HTTPS_PROXY \
-            -u all_proxy \
-            -u ALL_PROXY \
-            NO_PROXY="$no_proxy" \
-            no_proxy="$no_proxy" \
-            codex "$@"
-    fi
+    exec env \
+        -u http_proxy \
+        -u https_proxy \
+        -u HTTP_PROXY \
+        -u HTTPS_PROXY \
+        -u all_proxy \
+        -u ALL_PROXY \
+        NO_PROXY="$no_proxy" \
+        no_proxy="$no_proxy" \
+        codex "$@"
 }
 
 # -----------------------------
@@ -1426,12 +1417,14 @@ cmd_run() {
 cmd_use() {
     [[ $# -eq 1 ]] || die "用法: cr use NAME"
     load_profile "$1"
+    apply_auth_for_profile "$1"
     write_config_for_profile "$1"
+    refresh_daemon_after_auth_change
 }
 
 cmd_setup() {
     [[ $# -eq 1 ]] || die "用法: cr setup NAME"
-    write_config_for_profile "$1"
+    cmd_use "$1"
     echo
     cmd_direct "$1"
 }
