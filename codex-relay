@@ -56,6 +56,89 @@ is_ipv4() {
 
 
 # -----------------------------
+# 语言 / Language
+# -----------------------------
+detect_relay_language() {
+    local lang="zh"
+    if [[ -s "$LANGUAGE_FILE" ]]; then
+        IFS= read -r lang < "$LANGUAGE_FILE" || true
+        lang="${lang//[[:space:]]/}"
+    fi
+    case "$lang" in
+        en|en-US|en_US) echo "en" ;;
+        *) echo "zh" ;;
+    esac
+}
+
+RELAY_LANG="$(detect_relay_language)"
+
+L() {
+    local zh="$1" en="$2"
+    if [[ "$RELAY_LANG" == "en" ]]; then
+        printf '%s' "$en"
+    else
+        printf '%s' "$zh"
+    fi
+}
+
+cmd_language() {
+    local requested="${1:-}"
+
+    case "$requested" in
+        "")
+            ui_header "$(L '语言设置' 'LANGUAGE')"
+            ui_kv "$(L '当前语言' 'language')" "$RELAY_LANG"
+            printf '\n'
+            if [[ "$RELAY_LANG" == "en" ]]; then
+                echo "  cr language zh    Switch to Chinese (default)"
+                echo "  cr language en    Use English"
+            else
+                echo "  cr language zh    切换到中文（默认）"
+                echo "  cr language en    切换到 English"
+            fi
+            ;;
+        zh|zh-CN|zh_CN|cn|中文)
+            RELAY_LANG="zh"
+            printf '%s\n' "zh" > "$LANGUAGE_FILE"
+            ui_ok "语言已切换为中文"
+            ;;
+        en|en-US|en_US|english|English)
+            RELAY_LANG="en"
+            printf '%s\n' "en" > "$LANGUAGE_FILE"
+            ui_ok "Language switched to English"
+            ;;
+        *)
+            if [[ "$RELAY_LANG" == "en" ]]; then
+                die "Unknown language: $requested (use zh or en)"
+            else
+                die "未知语言: $requested（可用 zh 或 en）"
+            fi
+            ;;
+    esac
+}
+
+cmd_language_menu() {
+    while true; do
+        clear || true
+        ui_header "$(L '语言设置' 'LANGUAGE')"
+        ui_kv "$(L '当前语言' 'current')" "$RELAY_LANG"
+        printf '\n'
+        ui_menu_item "1" "中文" "$(L '默认语言' 'default language')"
+        ui_menu_item "2" "English" "$(L '英文界面' 'English interface')"
+        ui_menu_item "0" "$(L '返回' 'Back')" ""
+        printf '\n%s›%s %s%s%s  ' "$UI_PINK" "$UI_RESET" "$UI_BOLD" "$(L '选择语言' 'Choose language')" "$UI_RESET"
+        read -r choice
+        case "$choice" in
+            1) cmd_language zh; sleep 0.4; return ;;
+            2) cmd_language en; sleep 0.4; return ;;
+            0|q|Q) return ;;
+            *) ui_warn "$(L "无效选择: $choice" "Invalid choice: $choice")"; sleep 0.7 ;;
+        esac
+    done
+}
+
+
+# -----------------------------
 # UI / 终端视觉层
 # -----------------------------
 ui_init() {
@@ -851,6 +934,7 @@ cmd_status() {
     ui_section "Codex"
     ui_kv "CODEX_HOME" "$CODEX_DIR"
     ui_kv "RELAY_HOME" "$RELAY_DIR"
+    ui_kv "language" "$RELAY_LANG"
     ui_kv "config" "$CONFIG"
     ui_kv "current" "$name"
 
@@ -1661,32 +1745,33 @@ REPAIRPY
 cmd_menu() {
     while true; do
         clear || true
-        ui_header "CONTROL CENTER"
+        ui_header "$(L '控制中心' 'CONTROL CENTER')"
         ui_profile_card
 
-        ui_section "PROVIDERS"
-        ui_menu_item "1" "Launch baibai" "gpt-5.6-sol · xhigh"
-        ui_menu_item "2" "Launch nova" "gpt-5.5"
-        ui_menu_item "3" "Launch official OpenAI" "official provider"
+        ui_section "$(L '中转站 / PROVIDER' 'PROVIDERS')"
+        ui_menu_item "1" "$(L '启动 baibai' 'Launch baibai')" "gpt-5.6-sol · xhigh"
+        ui_menu_item "2" "$(L '启动 nova' 'Launch nova')" "gpt-5.5"
+        ui_menu_item "3" "$(L '启动官方 OpenAI' 'Launch official OpenAI')" "$(L '官方 provider' 'official provider')"
 
-        ui_section "CHAT / HISTORY"
-        ui_menu_item "4" "Recent chats" "latest 50 threads"
-        ui_menu_item "5" "Recover a chat" "choose provider / thread"
-        ui_menu_item "6" "Resume all" "all cwd / sessions"
-        ui_menu_item "13" "One-click history recovery" "backup → repair → reindex"
+        ui_section "$(L '聊天 / 历史记录' 'CHAT / HISTORY')"
+        ui_menu_item "4" "$(L '最近聊天' 'Recent chats')" "$(L '最近 50 个会话' 'latest 50 threads')"
+        ui_menu_item "5" "$(L '恢复一个聊天' 'Recover a chat')" "$(L '选择 provider / thread' 'choose provider / thread')"
+        ui_menu_item "6" "$(L '显示全部可恢复聊天' 'Resume all')" "$(L '全部目录 / 会话' 'all cwd / sessions')"
+        ui_menu_item "13" "$(L '一键恢复聊天历史' 'One-click history recovery')" "backup → repair → reindex"
 
-        ui_section "NETWORK"
-        ui_menu_item "7" "Network diagnostics" "DNS · TCP DNS · HTTPS"
-        ui_menu_item "8" "Configure direct access" "no VPN · validated hosts"
+        ui_section "$(L '网络' 'NETWORK')"
+        ui_menu_item "7" "$(L '网络诊断' 'Network diagnostics')" "DNS · TCP DNS · HTTPS"
+        ui_menu_item "8" "$(L '配置无代理直连' 'Configure direct access')" "$(L '无 VPN · 验证 hosts' 'no VPN · validated hosts')"
 
-        ui_section "SYSTEM"
-        ui_menu_item "9" "History health" "sessions · SQLite · index"
-        ui_menu_item "10" "Backup history" "safe snapshot"
-        ui_menu_item "11" "Profiles" "providers / endpoints"
-        ui_menu_item "12" "Show config.toml" "effective config"
-        ui_menu_item "0" "Exit" ""
+        ui_section "$(L '系统' 'SYSTEM')"
+        ui_menu_item "9" "$(L '聊天健康检查' 'History health')" "sessions · SQLite · index"
+        ui_menu_item "10" "$(L '备份聊天历史' 'Backup history')" "$(L '安全快照' 'safe snapshot')"
+        ui_menu_item "11" "$(L 'Profile 列表' 'Profiles')" "providers / endpoints"
+        ui_menu_item "12" "$(L '查看 config.toml' 'Show config.toml')" "$(L '当前有效配置' 'effective config')"
+        ui_menu_item "14" "$(L '语言设置' 'Language')" "$(L '中文 / English' 'Chinese / English')"
+        ui_menu_item "0" "$(L '退出' 'Exit')" ""
 
-        printf '\n%s›%s %sChoose an action%s  ' "$UI_PINK" "$UI_RESET" "$UI_BOLD" "$UI_RESET"
+        printf '\n%s›%s %s%s%s  ' "$UI_PINK" "$UI_RESET" "$UI_BOLD" "$(L '请选择操作' 'Choose an action')" "$UI_RESET"
         read -r choice
 
         case "$choice" in
@@ -1700,9 +1785,9 @@ cmd_menu() {
                 ;;
             3)
                 if [[ ! -s "$OFFICIAL_MODEL_FILE" ]]; then
-                    printf '%s›%s Official model: ' "$UI_PINK" "$UI_RESET"
+                    printf '%s›%s %s: ' "$UI_PINK" "$UI_RESET" "$(L '官方模型' 'Official model')"
                     read -r m
-                    [[ -n "$m" ]] || { ui_warn "模型不能为空"; ui_pause; continue; }
+                    [[ -n "$m" ]] || { ui_warn "$(L '模型不能为空' 'Model cannot be empty')"; ui_pause; continue; }
                     cmd_official "$m"
                 fi
                 write_config_for_profile official
@@ -1755,12 +1840,15 @@ cmd_menu() {
                 cmd_repair_history || true
                 ui_pause
                 ;;
+            14)
+                cmd_language_menu
+                ;;
             0|q|Q)
-                printf '\n%sGoodbye.%s\n' "$UI_DIM" "$UI_RESET"
+                printf '\n%s%s%s\n' "$UI_DIM" "$(L '已退出。' 'Goodbye.')" "$UI_RESET"
                 return
                 ;;
             *)
-                ui_warn "无效选择: $choice"
+                ui_warn "$(L "无效选择: $choice" "Invalid choice: $choice")"
                 sleep 0.7
                 ;;
         esac
@@ -1768,14 +1856,16 @@ cmd_menu() {
 }
 
 usage() {
-    ui_header "CLI REFERENCE"
-    cat <<EOF
+    ui_header "$(L '命令参考' 'CLI REFERENCE')"
+
+    if [[ "$RELAY_LANG" == "en" ]]; then
+        cat <<EOF
 
 ${UI_BOLD}Quick start${UI_RESET}
-  cr menu                     打开控制中心
-  cr use nova                 切换 config.toml → Nova
-  cr use baibai               切换 config.toml → baibai
-  cx                          清代理后启动 Codex
+  cr menu                     Open control center
+  cr use nova                 Switch config.toml → Nova
+  cr use baibai               Switch config.toml → baibai
+  cx                          Launch Codex without proxy
 
 ${UI_BOLD}Profiles${UI_RESET}
   cr list
@@ -1786,27 +1876,81 @@ ${UI_BOLD}Profiles${UI_RESET}
   cr show-config
 
 ${UI_BOLD}Network${UI_RESET}
-  cr check [PROFILE]          DNS / TCP DNS / HTTPS 诊断
-  cr direct [PROFILE]         配置无 VPN 直连
+  cr check [PROFILE]          DNS / TCP DNS / HTTPS diagnostics
+  cr direct [PROFILE]         Configure direct connection
   cr setup PROFILE            use + direct
 
 ${UI_BOLD}History${UI_RESET}
   cr history [N]
-  cr search 关键词
+  cr search KEYWORD
   cr recover-menu
   cr resume THREAD_ID [PROFILE]
   cr resume-all [PROFILE]
   cr health
   cr backup
   cr reindex
-  cr repair-history           一键备份 + 修 SQLite/路径/provider + 重建索引
+  cr repair-history           Backup + repair SQLite/path/provider + reindex
 
+${UI_BOLD}Language${UI_RESET}
+  cr language                 Show language
+  cr language zh              Chinese (default)
+  cr language en              English
+
+${UI_DIM}Relay state:${UI_RESET} $RELAY_DIR
+${UI_DIM}Codex data:${UI_RESET}  $CODEX_DIR
 ${UI_DIM}Built-ins:${UI_RESET}
   baibai   gpt-5.6-sol / xhigh / https://api.sharesai.xyz/v1
   nova     gpt-5.5 / https://ai.novacode.top
 
-${UI_DIM}Tip:${UI_RESET} 设置 NO_COLOR=1 可关闭彩色界面。
+${UI_DIM}Tip:${UI_RESET} set NO_COLOR=1 to disable colors.
 EOF
+    else
+        cat <<EOF
+
+${UI_BOLD}快速开始${UI_RESET}
+  cr menu                     打开控制中心
+  cr use nova                 切换 config.toml → Nova
+  cr use baibai               切换 config.toml → baibai
+  cx                          清除代理后启动 Codex
+
+${UI_BOLD}中转站 / Profile${UI_RESET}
+  cr list                     查看全部 profile
+  cr status                   查看当前状态
+  cr use NAME                 切换 profile
+  cr official MODEL           设置官方 OpenAI 模型
+  cr add NAME BASE_URL MODEL [PROVIDER_ID] [AUTH]
+  cr show-config              查看当前 config.toml
+
+${UI_BOLD}网络${UI_RESET}
+  cr check [PROFILE]          DNS / TCP DNS / HTTPS 诊断
+  cr direct [PROFILE]         配置无 VPN / 无代理直连
+  cr setup PROFILE            切换 + 配置直连
+
+${UI_BOLD}聊天历史${UI_RESET}
+  cr history [N]              查看最近聊天
+  cr search 关键词            搜索聊天
+  cr recover-menu             交互式恢复聊天
+  cr resume THREAD_ID [PROFILE]
+  cr resume-all [PROFILE]
+  cr health                   检查聊天库健康状态
+  cr backup                   备份聊天
+  cr reindex                  重建聊天索引
+  cr repair-history           一键备份 + 修 SQLite/路径/provider + 重建索引
+
+${UI_BOLD}语言${UI_RESET}
+  cr language                 查看当前语言
+  cr language zh              中文（默认）
+  cr language en              English
+
+${UI_DIM}Relay 配置目录:${UI_RESET} $RELAY_DIR
+${UI_DIM}Codex 数据目录:${UI_RESET} $CODEX_DIR
+${UI_DIM}内置 profile:${UI_RESET}
+  baibai   gpt-5.6-sol / xhigh / https://api.sharesai.xyz/v1
+  nova     gpt-5.5 / https://ai.novacode.top
+
+${UI_DIM}提示:${UI_RESET} 设置 NO_COLOR=1 可关闭彩色界面。
+EOF
+    fi
 }
 
 case "${1:-}" in
@@ -1850,6 +1994,8 @@ case "${1:-}" in
         shift; cmd_reindex "$@" ;;
     repair-history|repair)
         shift; cmd_repair_history "$@" ;;
+    language|lang)
+        shift; cmd_language "$@" ;;
     help|-h|--help|"")
         usage ;;
     *)
