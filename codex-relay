@@ -2170,56 +2170,182 @@ cmd_resume_all() {
     cmd_run resume --all --include-non-interactive
 }
 
+history_picker_rows() {
+    local query="${1:-}" limit="${2:-30}"
+    python3 - "$CODEX_DIR/state_5.sqlite" "$query" "$limit" <<'PY'
+import sqlite3
+import sys
+
+db, query, limit = sys.argv[1], sys.argv[2], int(sys.argv[3])
+conn = sqlite3.connect(db)
+
+sql = """
+SELECT
+    id,
+    datetime(updated_at,'unixepoch','localtime'),
+    COALESCE(model_provider,''),
+    COALESCE(model,''),
+    COALESCE(NULLIF(name,''),NULLIF(title,''),NULLIF(first_user_message,''),'(untitled)')
+FROM threads
+"""
+params = []
+if query:
+    sql += """
+WHERE id LIKE ? OR COALESCE(name,'') LIKE ? OR COALESCE(title,'') LIKE ?
+   OR COALESCE(first_user_message,'') LIKE ? OR COALESCE(model_provider,'') LIKE ?
+   OR COALESCE(model,'') LIKE ?
+"""
+    q = f"%{query}%"
+    params.extend([q] * 6)
+
+sql += " ORDER BY updated_at DESC LIMIT ?"
+params.append(limit)
+
+rows = conn.execute(sql, params).fetchall()
+conn.close()
+
+sep = "\x1f"
+for row in rows:
+    clean = []
+    for value in row:
+        text = str(value or "").replace("\t", " ").replace("\n", " ").replace("\r", " ")
+        clean.append(" ".join(text.split()))
+    clean[4] = clean[4][:92]
+    print(sep.join(clean))
+PY
+}
+
 cmd_recover_menu() {
     need sqlite3
     need python3
+    [[ -f "$CODEX_DIR/state_5.sqlite" ]] || die "state_5.sqlite 不存在"
 
-    local tmp
-    tmp="$(mktemp)"
+    local query="" choice line tid updated provider model title current original_profile
+    local -a rows=()
 
-    sqlite3 -separator $'\t' "$CODEX_DIR/state_5.sqlite" "
-SELECT
-    id,
-    model_provider,
-    substr(COALESCE(NULLIF(name,''),NULLIF(title,''),NULLIF(first_user_message,''),'(untitled)'),1,70)
-FROM threads
-ORDER BY updated_at DESC
-LIMIT 50;
-" > "$tmp"
+    while true; do
+        mapfile -t rows < <(history_picker_rows "$query" 30)
 
-    echo "=== 最近聊天 ==="
-    nl -w2 -s') ' "$tmp"
-    echo
-    read -r -p "选择编号（0取消）: " n
+        clear || true
+        ui_header "$(L '聊天恢复' 'CHAT RECOVERY')"
 
-    [[ "$n" == "0" ]] && { rm -f "$tmp"; return; }
-    [[ "$n" =~ ^[0-9]+$ ]] || { rm -f "$tmp"; die "编号非法"; }
+        ui_section "$(L '最近会话' 'RECENT SESSIONS')"
+        if [[ -n "$query" ]]; then
+            ui_kv "$(L '搜索' 'search')" "$query"
+        fi
 
-    local line tid provider title
-    line="$(sed -n "${n}p" "$tmp")"
-    rm -f "$tmp"
-    [[ -n "$line" ]] || die "没有这个编号"
+        if (( ${#rows[@]} == 0 )); then
+            ui_warn "$(L '没有找到匹配聊天。' 'No matching chats found.')"
+        else
+            local i=1
+            for line in "${rows[@]}"; do
+                IFS=$'\x1f' read -r tid updated provider model title <<< "$line"
+                printf '\n  %s[%2d]%s  %s%s%s  %s%s%s\n' \
+                    "$UI_CYAN" "$i" "$UI_RESET" \
+                    "$UI_BOLD$UI_WHITE" "$updated" "$UI_RESET" \
+                    "$UI_PURPLE" "${provider:-?}" "$UI_RESET"
+                printf '        %s├─ model%s  %s\n' "$UI_DIM" "$UI_RESET" "${model:-?}"
+                printf '        %s└─%s %s\n' "$UI_DIM" "$UI_RESET" "$title"
+                i=$((i+1))
+            done
+        fi
 
-    IFS=$'\t' read -r tid provider title <<< "$line"
+        printf '\n'
+        ui_rule
+        ui_menu_item "S" "$(L '搜索聊天' 'Search chats')" "$(L '标题 · ID · provider · model' 'title · ID · provider · model')"
+        [[ -n "$query" ]] && ui_menu_item "A" "$(L '显示最近全部' 'Show recent all')" "$(L '清除搜索' 'clear search')"
+        ui_menu_item "0" "$(L '返回' 'Back')" ""
 
-    echo
-    echo "选择恢复方式:"
-    echo "1) 原始 provider（推荐）"
-    echo "2) baibai"
-    echo "3) nova"
-    echo "4) official"
-    echo "5) 当前 profile ($(current_profile))"
-    read -r -p "请选择 [1]: " choice
-    choice="${choice:-1}"
+        printf '\n%s›%s ' "$UI_PINK" "$UI_RESET"
+        read -r choice
 
-    case "$choice" in
-        1) cmd_resume "$tid" ;;
-        2) cmd_resume "$tid" baibai ;;
-        3) cmd_resume "$tid" nova ;;
-        4) cmd_resume "$tid" official ;;
-        5) cmd_resume "$tid" "$(current_profile)" ;;
-        *) die "选择非法" ;;
-    esac
+        case "$choice" in
+            s|S)
+                printf '%s' "$(L '搜索关键词: ' 'Search keyword: ')"
+                IFS= read -r query
+                ;;
+            a|A)
+                query=""
+                ;;
+            0|q|Q)
+                return
+                ;;
+            *)
+                if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#rows[@]} )); then
+                    line="${rows[$((choice-1))]}"
+                    IFS=$'\x1f' read -r tid updated provider model title <<< "$line"
+                else
+                    ui_warn "$(L '无效选择' 'Invalid choice')"
+                    sleep 0.5
+                    continue
+                fi
+                ;;
+        esac
+
+        [[ "$choice" =~ ^[0-9]+$ ]] || continue
+
+        current="$(current_profile)"
+        original_profile="$(profile_for_old_provider "$provider")"
+
+        while true; do
+            clear || true
+            ui_header "$(L '恢复会话' 'RESUME SESSION')"
+
+            ui_section "$(L '会话信息' 'SESSION')"
+            ui_kv "ID" "$tid"
+            ui_kv "$(L '时间' 'updated')" "$updated"
+            ui_kv "$(L '原 Provider' 'original provider')" "${provider:-?}"
+            ui_kv "$(L '原 Model' 'original model')" "${model:-?}"
+            printf '\n  %s%s%s\n' "$UI_WHITE" "$title" "$UI_RESET"
+
+            ui_section "$(L '恢复方式' 'RESUME WITH')"
+            ui_menu_item "Enter" "$(L '按原 Provider 恢复' 'Resume with original provider')" "$original_profile"
+            ui_menu_item "B" "baibai" ""
+            ui_menu_item "N" "nova" ""
+            if [[ -s "$OFFICIAL_MODEL_FILE" ]]; then
+                ui_menu_item "O" "official" ""
+            fi
+            ui_menu_item "C" "$(L '使用当前路由' 'Use current route')" "$current"
+            ui_menu_item "0" "$(L '返回聊天列表' 'Back to chat list')" ""
+
+            printf '\n%s›%s ' "$UI_PINK" "$UI_RESET"
+            read -r choice
+
+            case "$choice" in
+                "")
+                    cmd_resume "$tid"
+                    return
+                    ;;
+                b|B)
+                    cmd_resume "$tid" baibai
+                    return
+                    ;;
+                n|N)
+                    cmd_resume "$tid" nova
+                    return
+                    ;;
+                o|O)
+                    if [[ -s "$OFFICIAL_MODEL_FILE" ]]; then
+                        cmd_resume "$tid" official
+                        return
+                    fi
+                    ui_warn "$(L 'official 尚未设置模型' 'official model is not configured')"
+                    sleep 0.5
+                    ;;
+                c|C)
+                    cmd_resume "$tid" "$current"
+                    return
+                    ;;
+                0|q|Q)
+                    break
+                    ;;
+                *)
+                    ui_warn "$(L '无效选择' 'Invalid choice')"
+                    sleep 0.5
+                    ;;
+            esac
+        done
+    done
 }
 
 cmd_health() {
