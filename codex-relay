@@ -1317,44 +1317,41 @@ cmd_add() {
 }
 
 cmd_list() {
-    local active
+    local active n mark kind key_state
     active="$(current_profile)"
-    ui_header "PROFILES"
-    printf '\n  %s%-3s %-12s %-10s %-16s %-18s %s%s\n' \
-        "$UI_DIM" "" "PROFILE" "TYPE" "PROVIDER" "MODEL" "BASE URL" "$UI_RESET"
+    ui_header "$(L '中转站列表' 'PROFILES')"
+    printf '\n  %-3s %-14s %-9s %-18s %-11s %s\n' "" "PROFILE" "TYPE" "MODEL" "KEY" "ENDPOINT"
     ui_rule
 
-    local mark
-    mark=" "
-    [[ "$active" == "baibai" ]] && mark="●"
-    printf '  %s%-3s%s %-12s %-10s %-16s %-18s %s\n' "$UI_GREEN" "$mark" "$UI_RESET" \
-        "baibai" "builtin" "baibai" "gpt-5.6-sol" "https://api.sharesai.xyz/v1"
-
-    mark=" "
-    [[ "$active" == "nova" ]] && mark="●"
-    printf '  %s%-3s%s %-12s %-10s %-16s %-18s %s\n' "$UI_GREEN" "$mark" "$UI_RESET" \
-        "nova" "builtin" "OpenAI" "gpt-5.5" "https://ai.novacode.top"
-
-    mark=" "
-    [[ "$active" == "official" ]] && mark="●"
-    if [[ -s "$OFFICIAL_MODEL_FILE" ]]; then
-        printf '  %s%-3s%s %-12s %-10s %-16s %-18s %s\n' "$UI_GREEN" "$mark" "$UI_RESET" \
-            "official" "builtin" "openai" "$(cat "$OFFICIAL_MODEL_FILE")" "https://api.openai.com/v1"
-    else
-        printf '  %s%-3s%s %-12s %-10s %-16s %-18s %s\n' "$UI_GREEN" "$mark" "$UI_RESET" \
-            "official" "builtin" "openai" "<not set>" "https://api.openai.com/v1"
-    fi
-
-    while IFS=$'\t' read -r n p u m a r rv g; do
+    while IFS= read -r n; do
         [[ -n "$n" ]] || continue
+        load_profile "$n"
+
         mark=" "
         [[ "$active" == "$n" ]] && mark="●"
-        printf '  %s%-3s%s %-12s %-10s %-16s %-18s %s\n' "$UI_GREEN" "$mark" "$UI_RESET" \
-            "$n" "custom" "$p" "$m" "$u"
-    done < "$REGISTRY"
+
+        case "$n" in
+            nova|baibai) kind="builtin" ;;
+            official) kind="official" ;;
+            *) kind="custom" ;;
+        esac
+
+        if [[ "$P_AUTH" == "relay" ]]; then
+            if relay_key_exists "$n"; then
+                key_state="SET"
+            else
+                key_state="NOT SET"
+            fi
+        else
+            key_state="Codex"
+        fi
+
+        printf '  %-3s %-14s %-9s %-18s %-11s %s\n' \
+            "$mark" "$n" "$kind" "$P_MODEL" "$key_state" "$P_URL"
+    done < <(profile_names)
 
     printf '\n'
-    ui_info "● 表示当前激活配置"
+    ui_info "$(L '● 表示当前激活；显示的是当前用户实际生效的模型与地址' '● marks active; values include this user’s overrides')"
 }
 
 cmd_status() {
