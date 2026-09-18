@@ -230,7 +230,15 @@ hash -r
 
 ## 快速开始
 
-打开控制中心：
+像 CC-Switch 一样，直接运行：
+
+```bash
+cr
+```
+
+会进入 **中转站管理器**。这里可以查看当前中转站、模型、Key 状态，并进行切换、编辑、测速、添加和删除。
+
+完整控制中心仍然可以使用：
 
 ```bash
 cr menu
@@ -381,6 +389,12 @@ userC → 中文
 ## CC-Switch 风格中转站管理
 
 打开交互式中转站管理器：
+
+```bash
+cr
+```
+
+等价于：
 
 ```bash
 cr providers
@@ -632,7 +646,10 @@ cr repair-history
 ## 常用命令速查
 
 ```bash
-cr menu
+cr                          # 打开中转站管理器
+cr menu                     # 打开完整控制中心
+cr providers                # 同 cr
+
 cr language
 cr language zh
 cr language en
