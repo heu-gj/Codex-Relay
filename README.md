@@ -369,6 +369,25 @@ cr key set baibai
 cr key
 ```
 
+在 `cr menu → [4] 设置 → [1] API Key 管理` 中，会进入动态 Credentials 页面。它会自动列出所有 `relay` 类型中转站，包括自定义 provider，而不是只写死 Nova / baibai：
+
+```text
+CODEX RELAY // CREDENTIALS
+
+◆ 当前用户 API Keys
+
+  [1]  BAIBAI       ✓ KEY SET   ● ACTIVE
+       └─ gpt-5.6-sol · api.sharesai.xyz
+
+  [2]  NOVA         ✓ KEY SET   ○ STANDBY
+       └─ gpt-5.5 · ai.novacode.top
+
+  [3]  MYRELAY      ✕ NO KEY    ○ STANDBY
+
+```
+
+进入某个凭据后可以更新或删除 Key。删除操作需要再次输入确认；如果删除的是当前正在使用的中转站 Key，会明确提示并自动停止当前用户 Codex。
+
 切换到中转站时，Codex-Relay 会同时处理两份 **Codex 原生文件**：
 
 ```text
@@ -659,6 +678,27 @@ cr check nova
 cr check baibai
 ```
 
+网络诊断使用结构化状态面板，不再直接把 `getent` / `dig` 原始输出堆到屏幕：
+
+```text
+CODEX RELAY // NETWORK DIAGNOSTICS
+
+◆ ROUTE
+  profile      baibai
+  endpoint     api.sharesai.xyz
+
+◆ CHECKS
+  [!] Shell Proxy        DETECTED · Codex 启动时会绕过
+  [✓] System DNS         104.21.x.x
+  [✓] TCP DNS            104.21.x.x
+  [✓] Direct HTTPS       HTTP 401 · 168 ms
+
+◆ STATUS
+  ✓ NETWORK READY
+```
+
+其中 HTTP 401 / 403 / 404 仍表示 DNS、TCP、TLS 和 HTTPS 链路已经到达服务端；诊断页面关注的是“能否直连”，不是 API Key 是否有效。成功诊断也会更新该 provider 的网络缓存，供 `cr` / `cr menu` 展示。
+
 第一次配置：
 
 ```bash
@@ -715,6 +755,38 @@ cr search 关键词
 ```bash
 cr recover-menu
 ```
+
+恢复界面是 Session Picker，会显示时间、原 provider、原 model 和标题，并支持按 `S` 搜索：
+
+```text
+CODEX RELAY // CHAT RECOVERY
+
+◆ 最近会话
+
+  [ 1]  2026-09-18 21:42   baibai
+        ├─ model  gpt-5.6-sol
+        └─ 修复 Codex Relay 中转站界面
+
+  [ 2]  2026-09-18 18:07   OpenAI
+        ├─ model  gpt-5.5
+        └─ Python 项目性能分析
+
+  [S] 搜索聊天
+  [0] 返回
+```
+
+选中会话后再选择恢复路由：
+
+```text
+[Enter] 按原 Provider 恢复
+[B]     baibai
+[N]     nova
+[O]     official
+[C]     当前路由
+[0]     返回聊天列表
+```
+
+搜索使用 SQLite 参数绑定，不把用户输入直接拼进 SQL。
 
 按 ID 恢复：
 
