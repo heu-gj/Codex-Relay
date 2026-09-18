@@ -2812,134 +2812,94 @@ cmd_menu_settings() {
 # 菜单
 # -----------------------------
 cmd_menu() {
-    local baibai_hint nova_hint
+    local choice name key_state network quota cli daemon daemon_text processes proxy_text host
     while true; do
+        name="$(current_profile)"
+        load_profile "$name"
+
+        if [[ "$P_AUTH" == "relay" ]]; then
+            if relay_key_exists "$name"; then
+                key_state="$(L '✓ 已设置' '✓ SET')"
+            else
+                key_state="$(L '✕ 未设置' '✕ NOT SET')"
+            fi
+        else
+            key_state="$(L 'Codex 官方认证' 'Codex native auth')"
+        fi
+
+        network="$(dashboard_network_summary "$name")"
+        quota="$(official_quota_summary)"
+        cli="$(dashboard_cli_version)"
+        daemon="$(dashboard_daemon_version)"
+        daemon_text="$daemon"
+        if [[ "$cli" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$daemon" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$cli" != "$daemon" ]]; then
+            daemon_text="$daemon ⚠ $(L '版本不一致' 'VERSION MISMATCH')"
+        fi
+        processes="$(codex_process_count)"
+        host="$(url_host "$P_URL" 2>/dev/null || printf '%s' "$P_URL")"
+
+        if env | grep -qiE '^(http|https|all)_proxy='; then
+            proxy_text="$(L 'DETECTED → 启动时禁用' 'DETECTED → disabled on launch')"
+        else
+            proxy_text="CLEAN"
+        fi
+
         clear || true
         ui_header "$(L '控制中心' 'CONTROL CENTER')"
-        ui_profile_card
 
-        load_profile baibai
-        baibai_hint="$P_MODEL"
-        [[ -n "$P_REASONING" ]] && baibai_hint="$baibai_hint · $P_REASONING"
-        load_profile nova
-        nova_hint="$P_MODEL"
+        ui_section "$(L '当前状态' 'STATUS')"
+        ui_kv "$(L '中转站' 'provider')" "● $name"
+        ui_kv "model" "$P_MODEL${P_REASONING:+ · $P_REASONING}"
+        ui_kv "endpoint" "$host"
+        ui_kv "API Key" "$key_state"
+        ui_kv "$(L '网络' 'network')" "$network"
+        ui_kv "Codex CLI" "$cli"
+        ui_kv "daemon" "$daemon_text"
+        ui_kv "$(L 'Codex 进程' 'processes')" "$processes"
+        ui_kv "$(L 'Shell 代理' 'shell proxy')" "$proxy_text"
+        ui_kv "$(L '官方额度' 'official quota')" "$quota"
+        if [[ "$P_AUTH" == "relay" ]]; then
+            ui_kv "$(L '中转额度' 'relay quota')" "$(L 'N/A · 服务商未提供稳定公开接口' 'N/A · no stable public provider API')"
+        fi
 
-        ui_section "$(L '中转站 / PROVIDER' 'PROVIDERS')"
-        ui_menu_item "1" "$(L '启动 baibai' 'Launch baibai')" "$baibai_hint"
-        ui_menu_item "2" "$(L '启动 nova' 'Launch nova')" "$nova_hint"
-        ui_menu_item "3" "$(L '启动官方 OpenAI' 'Launch official OpenAI')" "$(L '官方 provider' 'official provider')"
-
-        ui_section "$(L '聊天 / 历史记录' 'CHAT / HISTORY')"
-        ui_menu_item "4" "$(L '最近聊天' 'Recent chats')" "$(L '最近 50 个会话' 'latest 50 threads')"
-        ui_menu_item "5" "$(L '恢复一个聊天' 'Recover a chat')" "$(L '选择 provider / thread' 'choose provider / thread')"
-        ui_menu_item "6" "$(L '显示全部可恢复聊天' 'Resume all')" "$(L '全部目录 / 会话' 'all cwd / sessions')"
-        ui_menu_item "13" "$(L '一键恢复聊天历史' 'One-click history recovery')" "backup → repair → reindex"
-
-        ui_section "$(L '网络' 'NETWORK')"
-        ui_menu_item "7" "$(L '网络诊断' 'Network diagnostics')" "DNS · TCP DNS · HTTPS"
-        ui_menu_item "8" "$(L '配置无代理直连' 'Configure direct access')" "$(L '无 VPN · 验证 hosts' 'no VPN · validated hosts')"
-
-        ui_section "$(L '系统' 'SYSTEM')"
-        ui_menu_item "9" "$(L '聊天健康检查' 'History health')" "sessions · SQLite · index"
-        ui_menu_item "10" "$(L '备份聊天历史' 'Backup history')" "$(L '安全快照' 'safe snapshot')"
-        ui_menu_item "11" "$(L 'Profile 列表' 'Profiles')" "providers / endpoints"
-        ui_menu_item "12" "$(L '查看 config.toml' 'Show config.toml')" "$(L '当前有效配置' 'effective config')"
-        ui_menu_item "14" "$(L '语言设置' 'Language')" "$(L '中文 / English' 'Chinese / English')"
-        ui_menu_item "15" "$(L 'API Key 管理' 'API Key management')" "$(L '每用户 / 每中转站独立' 'per-user / per-provider')"
-        ui_menu_item "16" "$(L '中转站管理' 'Provider manager')" "$(L '添加 / 编辑 / 模型 / Key / 测速' 'add / edit / model / key / speed')"
-        ui_menu_item "17" "$(L '停止当前用户全部 Codex' 'Stop all Codex for current user')" "$(L 'daemon + 残留进程' 'daemon + remaining processes')"
-        ui_menu_item "0" "$(L '退出' 'Exit')" ""
+        ui_section "$(L '功能' 'MAIN')"
+        ui_menu_item "1" "$(L '中转站' 'Providers')" "$(L '切换 · 模型 · 地址 · Key · 测速' 'switch · model · endpoint · key · speed')"
+        ui_menu_item "2" "$(L '聊天历史' 'Chat / History')" "$(L '最近 · 搜索 · 恢复 · 修复' 'recent · search · resume · repair')"
+        ui_menu_item "3" "$(L '网络与服务' 'Network & Services')" "$(L '诊断 · Direct · daemon · 一键停止' 'diagnostics · direct · daemon · stop')"
+        ui_menu_item "4" "$(L '设置' 'Settings')" "$(L '额度 · Key · 配置 · 语言' 'quota · key · config · language')"
+        printf '\n'
+        ui_menu_item "Enter" "$(L '启动当前 Codex' 'Launch current Codex')" "$name"
+        ui_menu_item "R" "$(L '刷新状态' 'Refresh status')" "$(L '网络 + 额度' 'network + quota')"
+        ui_menu_item "Q" "$(L '退出' 'Exit')" ""
 
         printf '\n%s›%s %s%s%s  ' "$UI_PINK" "$UI_RESET" "$UI_BOLD" "$(L '请选择操作' 'Choose an action')" "$UI_RESET"
         read -r choice
-
         case "$choice" in
+            "")
+                cmd_run
+                ;;
             1)
-                write_config_for_profile baibai
-                cmd_run
-                ;;
-            2)
-                write_config_for_profile nova
-                cmd_run
-                ;;
-            3)
-                if [[ ! -s "$OFFICIAL_MODEL_FILE" ]]; then
-                    printf '%s›%s %s: ' "$UI_PINK" "$UI_RESET" "$(L '官方模型' 'Official model')"
-                    read -r m
-                    [[ -n "$m" ]] || { ui_warn "$(L '模型不能为空' 'Model cannot be empty')"; ui_pause; continue; }
-                    cmd_official "$m"
-                fi
-                write_config_for_profile official
-                cmd_run
-                ;;
-            4)
-                clear || true
-                cmd_history 50
-                ui_pause
-                ;;
-            5)
-                cmd_recover_menu
-                ;;
-            6)
-                cmd_resume_all
-                ;;
-            7)
-                clear || true
-                cmd_check "$(current_profile)" || true
-                ui_pause
-                ;;
-            8)
-                clear || true
-                cmd_direct "$(current_profile)" || true
-                ui_pause
-                ;;
-            9)
-                clear || true
-                cmd_health
-                ui_pause
-                ;;
-            10)
-                clear || true
-                cmd_backup
-                ui_pause
-                ;;
-            11)
-                clear || true
-                cmd_list
-                ui_pause
-                ;;
-            12)
-                clear || true
-                ui_header "CONFIG.TOML"
-                cmd_show_config
-                ui_pause
-                ;;
-            13)
-                clear || true
-                cmd_repair_history || true
-                ui_pause
-                ;;
-            14)
-                cmd_language_menu
-                ;;
-            15)
-                cmd_key_menu
-                ;;
-            16)
                 cmd_providers
                 ;;
-            17)
-                clear || true
-                cmd_stop || true
-                ui_pause
+            2)
+                cmd_menu_history
                 ;;
-            0|q|Q)
+            3)
+                cmd_menu_network
+                ;;
+            4)
+                cmd_menu_settings
+                ;;
+            r|R)
+                dashboard_refresh
+                ;;
+            q|Q|0)
                 printf '\n%s%s%s\n' "$UI_DIM" "$(L '已退出。' 'Goodbye.')" "$UI_RESET"
                 return
                 ;;
             *)
                 ui_warn "$(L "无效选择: $choice" "Invalid choice: $choice")"
-                sleep 0.7
+                sleep 0.5
                 ;;
         esac
     done
