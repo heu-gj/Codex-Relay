@@ -1294,6 +1294,7 @@ cmd_add() {
     local auth="${5:-relay}"
 
     [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || die "NAME 格式非法"
+    case "$name" in nova|baibai|official) die "NAME 是内置保留名称: $name" ;; esac
     [[ "$provider" =~ ^[A-Za-z0-9_-]+$ ]] || die "PROVIDER_ID 格式非法"
     [[ "$url" =~ ^https?:// ]] || die "BASE_URL 必须以 http:// 或 https:// 开头"
 
@@ -2173,14 +2174,21 @@ REPAIRPY
 # 菜单
 # -----------------------------
 cmd_menu() {
+    local baibai_hint nova_hint
     while true; do
         clear || true
         ui_header "$(L '控制中心' 'CONTROL CENTER')"
         ui_profile_card
 
+        load_profile baibai
+        baibai_hint="$P_MODEL"
+        [[ -n "$P_REASONING" ]] && baibai_hint="$baibai_hint · $P_REASONING"
+        load_profile nova
+        nova_hint="$P_MODEL"
+
         ui_section "$(L '中转站 / PROVIDER' 'PROVIDERS')"
-        ui_menu_item "1" "$(L '启动 baibai' 'Launch baibai')" "gpt-5.6-sol · xhigh"
-        ui_menu_item "2" "$(L '启动 nova' 'Launch nova')" "gpt-5.5"
+        ui_menu_item "1" "$(L '启动 baibai' 'Launch baibai')" "$baibai_hint"
+        ui_menu_item "2" "$(L '启动 nova' 'Launch nova')" "$nova_hint"
         ui_menu_item "3" "$(L '启动官方 OpenAI' 'Launch official OpenAI')" "$(L '官方 provider' 'official provider')"
 
         ui_section "$(L '聊天 / 历史记录' 'CHAT / HISTORY')"
@@ -2200,6 +2208,7 @@ cmd_menu() {
         ui_menu_item "12" "$(L '查看 config.toml' 'Show config.toml')" "$(L '当前有效配置' 'effective config')"
         ui_menu_item "14" "$(L '语言设置' 'Language')" "$(L '中文 / English' 'Chinese / English')"
         ui_menu_item "15" "$(L 'API Key 管理' 'API Key management')" "$(L '每用户 / 每中转站独立' 'per-user / per-provider')"
+        ui_menu_item "16" "$(L '中转站管理' 'Provider manager')" "$(L '添加 / 编辑 / 模型 / Key / 测速' 'add / edit / model / key / speed')"
         ui_menu_item "0" "$(L '退出' 'Exit')" ""
 
         printf '\n%s›%s %s%s%s  ' "$UI_PINK" "$UI_RESET" "$UI_BOLD" "$(L '请选择操作' 'Choose an action')" "$UI_RESET"
@@ -2276,6 +2285,9 @@ cmd_menu() {
                 ;;
             15)
                 cmd_key_menu
+                ;;
+            16)
+                cmd_providers
                 ;;
             0|q|Q)
                 printf '\n%s%s%s\n' "$UI_DIM" "$(L '已退出。' 'Goodbye.')" "$UI_RESET"
