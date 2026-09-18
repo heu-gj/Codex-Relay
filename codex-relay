@@ -2583,17 +2583,43 @@ cmd_repair_history_auto() {
     clear || true
     ui_header "$(L '一键修复聊天历史' 'ONE-CLICK HISTORY REPAIR')"
 
-    if [[ "$(codex_process_count)" != "0" ]]; then
-        ui_warn "$(L '检测到当前用户仍有 Codex 服务/进程。将自动停止它们后继续修复聊天历史。' 'Codex services/processes are running for this user. They will be stopped automatically before history repair continues.')"
-        printf '\n'
+    local running confirm
+    running="$(codex_process_count)"
+
+    ui_warn "$(L '此操作会停止当前 Linux 用户的全部 Codex 服务/进程，并可能中断正在执行或排队的任务。' 'This will stop all Codex services/processes for the current Linux user and may interrupt running or queued work.')"
+    ui_kv "$(L '检测到的 Codex 进程' 'detected Codex processes')" "$running"
+    printf '\n'
+
+    if [[ "$running" == "0" ]]; then
+        ui_info "$(L '当前未检测到运行中的 Codex 进程，但脚本无法可靠判断 daemon 队列中是否仍有任务。' 'No running Codex processes were detected, but the script cannot reliably determine whether daemon work is still queued.')"
+    else
+        ui_warn "$(L '当前检测到 Codex 仍在运行；继续后会自动全部停止。' 'Codex is currently running; continuing will stop it automatically.')"
+    fi
+
+    printf '\n%s' "$(L '请确认当前用户没有正在执行或排队的重要任务。输入 YES 或“确认”继续: ' 'Confirm there is no important running or queued work. Type YES or confirm to continue: ')"
+    IFS= read -r confirm
+
+    case "$confirm" in
+        YES|yes|Yes|确认|confirm|CONFIRM)
+            ;;
+        *)
+            ui_info "$(L '已取消一键修复，没有停止 Codex，也没有修改聊天数据库。' 'One-click repair cancelled. Codex was not stopped and the history database was not modified.')"
+            return 0
+            ;;
+    esac
+
+    printf '\n'
+    if [[ "$running" != "0" ]]; then
         if ! cmd_stop; then
             ui_fail "$(L 'Codex 未能完全停止，已取消历史修复。' 'Codex could not be fully stopped; history repair was cancelled.')"
             return 1
         fi
         printf '\n'
-    else
-        ui_ok "$(L '当前用户没有运行中的 Codex，可以直接修复。' 'No Codex processes are running for this user; repair can proceed.')"
-        printf '\n'
+    fi
+
+    if ! require_codex_stopped; then
+        ui_fail "$(L '仍检测到 Codex 运行，已取消历史修复。' 'Codex is still running; history repair was cancelled.')"
+        return 1
     fi
 
     cmd_repair_history
@@ -2611,7 +2637,7 @@ cmd_menu_history() {
         ui_menu_item "5" "$(L '健康检查' 'Health check')" "sessions · SQLite · index"
         ui_menu_item "6" "$(L '备份聊天历史' 'Backup history')" ""
         ui_menu_item "7" "$(L '重建索引' 'Rebuild index')" "$(L '要求先停止 Codex' 'Codex must be stopped')"
-        ui_menu_item "8" "$(L '一键修复历史' 'One-click repair')" "$(L '自动停止 Codex → backup → repair → reindex' 'auto-stop Codex → backup → repair → reindex')"
+        ui_menu_item "8" "$(L '一键修复历史' 'One-click repair')" "$(L '二次确认 → 停止 Codex → backup → repair → reindex' 'confirm → stop Codex → backup → repair → reindex')"
         ui_menu_item "0" "$(L '返回' 'Back')" ""
         printf '\n> '; read -r choice
         case "$choice" in
