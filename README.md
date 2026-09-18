@@ -355,9 +355,13 @@ cr switch nova
 cr switch baibai
 ```
 
-如果 `auth.json` 发生变化，Relay 会记录待刷新状态；真正通过 `cx` / `cr switch` 启动新 Codex 时，再停止旧 app-server daemon，让新进程读取最新认证。这样不会在单纯执行 `cr use` 或 `cr key set` 时立即中断后台任务。
+如果通过 `cr key set PROFILE` 更新的是**当前正在使用的中转站**，Relay 会立即同步 `~/.codex/auth.json`，然后自动执行当前用户级的 Codex 停止流程，让新 Key 在下次启动时确定生效。这个停止流程只影响当前 Linux 用户，但会中断该用户正在运行或排队的 Codex 工作。
 
-> 已经运行中的 Codex 会话不会热切换 provider。更换中转站时应结束当前会话再启动新会话，但不再需要重新粘贴 API Key。
+如果更新的是**非当前中转站**，Relay 只保存新的 Key，不会打断当前 Codex。等以后切换到该中转站时再应用。
+
+`cr use PROFILE` 只负责切换 config/auth，不主动启动 Codex；`cr switch PROFILE` 会切换并启动。若切换导致认证变化，启动前仍会刷新旧 app-server daemon。
+
+> 已经运行中的 Codex 会话不会热切换 provider。API Key 或中转站发生变化后，应启动新的 Codex 会话；Relay 会负责当前用户的必要服务刷新，不再需要手动粘贴 API Key。
 
 ## 语言设置
 
