@@ -68,6 +68,8 @@ fi
 
 say "使用全局主程序: $RELAY"
 
+need python3 || { echo "ERROR: 缺少 python3" >&2; exit 1; }
+
 python3 - "$BASHRC" "$MARK_BEGIN" "$MARK_END" <<'PYBLOCK123'
 from pathlib import Path
 import sys
