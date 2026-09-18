@@ -1516,6 +1516,124 @@ PY
     return 1
 }
 
+cmd_model_picker() {
+    local name="$1" choice current value i
+    local -a models=()
+
+    while true; do
+        load_profile "$name"
+        current="$P_MODEL"
+
+        clear || true
+        ui_header "MODEL // ${name^^}"
+        ui_kv "$(L '当前模型' 'current model')" "$current"
+        ui_kv "endpoint" "$(provider_host "$P_URL")"
+        printf '\n'
+
+        if [[ "$P_AUTH" != "relay" ]]; then
+            ui_warn "$(L '该 profile 不能通过 Relay API Key 自动读取模型列表，请手动输入模型 ID。' 'This profile cannot discover models through a relay API key; enter the model ID manually.')"
+            printf '\n%s [%s]: ' "$(L '模型 ID' 'Model ID')" "$current"
+            IFS= read -r value
+            [[ -n "$value" ]] && cmd_model "$name" "$value"
+            ui_pause
+            return
+        fi
+
+        if ! relay_key_exists "$name"; then
+            ui_warn "$(L '读取模型列表需要当前用户这个中转站自己的 API Key。' 'Reading the model list requires this user’s API key for the provider.')"
+            ui_menu_item "K" "$(L '设置 API Key 后重试' 'Set API key and retry')" ""
+            ui_menu_item "M" "$(L '手动输入模型 ID' 'Enter model ID manually')" ""
+            ui_menu_item "0" "$(L '返回' 'Back')" ""
+            printf '\n%s›%s ' "$UI_PINK" "$UI_RESET"
+            read -r choice
+            case "$choice" in
+                k|K) cmd_key set "$name"; ui_pause ;;
+                m|M)
+                    printf '%s [%s]: ' "$(L '模型 ID' 'Model ID')" "$current"
+                    IFS= read -r value
+                    [[ -n "$value" ]] && cmd_model "$name" "$value"
+                    ui_pause
+                    return
+                    ;;
+                0|q|Q) return ;;
+                *) ui_warn "$(L '无效选择' 'Invalid choice')"; sleep 0.5 ;;
+            esac
+            continue
+        fi
+
+        ui_step "$(L '正在读取中转站可用模型…' 'Reading available models from provider…')"
+        models=()
+        mapfile -t models < <(fetch_provider_models "$name" || true)
+
+        if (( ${#models[@]} == 0 )); then
+            ui_warn "$(L '没有从 /models 或 /v1/models 读取到模型列表；服务商可能没有提供模型枚举接口。' 'No model list was returned from /models or /v1/models; the provider may not expose model discovery.')"
+            ui_menu_item "R" "$(L '重新读取' 'Retry')" ""
+            ui_menu_item "M" "$(L '手动输入模型 ID' 'Enter model ID manually')" ""
+            ui_menu_item "0" "$(L '返回' 'Back')" ""
+            printf '\n%s›%s ' "$UI_PINK" "$UI_RESET"
+            read -r choice
+            case "$choice" in
+                r|R) continue ;;
+                m|M)
+                    printf '%s [%s]: ' "$(L '模型 ID' 'Model ID')" "$current"
+                    IFS= read -r value
+                    [[ -n "$value" ]] && cmd_model "$name" "$value"
+                    ui_pause
+                    return
+                    ;;
+                0|q|Q) return ;;
+                *) ui_warn "$(L '无效选择' 'Invalid choice')"; sleep 0.5 ;;
+            esac
+            continue
+        fi
+
+        ui_section "$(L '可用模型' 'AVAILABLE MODELS')"
+        i=1
+        for value in "${models[@]}"; do
+            if [[ "$value" == "$current" ]]; then
+                ui_menu_item "$i" "$value" "$(L '● 当前' '● CURRENT')"
+            else
+                ui_menu_item "$i" "$value" ""
+            fi
+            i=$((i+1))
+            (( i > 60 )) && break
+        done
+
+        if (( ${#models[@]} > 60 )); then
+            ui_info "$(L '模型超过 60 个，当前显示前 60 个；也可以使用手动输入。' 'More than 60 models were returned; showing the first 60. Manual entry is also available.')"
+        fi
+
+        printf '\n'
+        ui_menu_item "R" "$(L '重新读取模型列表' 'Refresh model list')" ""
+        ui_menu_item "M" "$(L '手动输入模型 ID' 'Enter model ID manually')" ""
+        ui_menu_item "0" "$(L '返回' 'Back')" ""
+        printf '\n%s›%s ' "$UI_PINK" "$UI_RESET"
+        read -r choice
+
+        case "$choice" in
+            r|R) continue ;;
+            m|M)
+                printf '%s [%s]: ' "$(L '模型 ID' 'Model ID')" "$current"
+                IFS= read -r value
+                [[ -n "$value" ]] && cmd_model "$name" "$value"
+                ui_pause
+                return
+                ;;
+            0|q|Q) return ;;
+            *)
+                if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#models[@]} && choice <= 60 )); then
+                    value="${models[$((choice-1))]}"
+                    cmd_model "$name" "$value"
+                    ui_pause
+                    return
+                fi
+                ui_warn "$(L '无效选择' 'Invalid choice')"
+                sleep 0.5
+                ;;
+        esac
+    done
+}
+
 cmd_provider_detail() {
     local name="$1" choice v key_state current network host type_badge status_text model_line
     while true; do
@@ -1564,7 +1682,7 @@ cmd_provider_detail() {
         ui_menu_item "U" "$(L '仅设为当前中转站' 'Use without launching')" "$(L '只更新 config/auth' 'update config/auth only')"
 
         ui_section "$(L '配置' 'CONFIGURE')"
-        ui_menu_item "2" "$(L '修改默认模型' 'Edit default model')" "$P_MODEL"
+        ui_menu_item "2" "$(L '选择 / 修改默认模型' 'Choose / edit default model')" "$(L "$P_MODEL · 先读取可用模型" "$P_MODEL · discover models first")"
         [[ "$name" != "official" ]] && ui_menu_item "3" "$(L '修改 API 地址' 'Edit endpoint')" "$host"
         [[ "$P_AUTH" == "relay" ]] && ui_menu_item "4" "$(L '设置 / 更新 API Key' 'Set / update API key')" "$key_state"
 
@@ -1593,10 +1711,7 @@ cmd_provider_detail() {
                 ui_pause
                 ;;
             2)
-                printf '%s [%s]: ' "$(L '新模型' 'New model')" "$P_MODEL"
-                read -r v
-                [[ -n "$v" ]] && cmd_model "$name" "$v"
-                ui_pause
+                cmd_model_picker "$name"
                 ;;
             3)
                 [[ "$name" != "official" ]] || continue
