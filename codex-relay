@@ -759,20 +759,47 @@ profile_names() {
 }
 
 cmd_model() {
-    [[ $# -eq 2 ]] || die "$(L '用法: cr model PROFILE MODEL' 'Usage: cr model PROFILE MODEL')"
-    local name="$1" new_model="$2" old_model old_review
+    [[ $# -ge 2 && $# -le 3 ]] || die "$(L '用法: cr model PROFILE MODEL [REASONING|auto|keep]' 'Usage: cr model PROFILE MODEL [REASONING|auto|keep]')"
+    local name="$1" new_model="$2" reasoning_arg="${3:-auto}"
+    local old_model old_review new_reasoning=""
+
     profile_exists "$name" || die "$(L "没有这个 profile: $name" "Unknown profile: $name")"
+
     if [[ "$name" == "official" ]]; then
         printf '%s\n' "$new_model" > "$OFFICIAL_MODEL_FILE"
-    else
-        load_profile "$name"
-        old_model="$P_MODEL"
-        old_review="$P_REVIEW"
-        [[ -n "$old_review" && "$old_review" == "$old_model" ]] && old_review="$new_model"
-        save_profile_override "$name" "$P_URL" "$new_model" "$P_REASONING" "$old_review"
+        [[ "$(current_profile)" == "$name" ]] && write_config_for_profile "$name"
+        ui_ok "$(L "$name 默认模型 → $new_model" "$name default model → $new_model")"
+        return 0
     fi
+
+    load_profile "$name"
+    old_model="$P_MODEL"
+    old_review="$P_REVIEW"
+    [[ -n "$old_review" && "$old_review" == "$old_model" ]] && old_review="$new_model"
+
+    case "${reasoning_arg,,}" in
+        auto|"")
+            new_reasoning=""
+            ;;
+        keep)
+            new_reasoning="$P_REASONING"
+            ;;
+        *)
+            new_reasoning="${reasoning_arg,,}"
+            [[ "$new_reasoning" =~ ^[A-Za-z0-9._-]+$ ]] || \
+                die "$(L 'REASONING 格式非法，只能使用字母、数字、点、下划线和短横线' 'Invalid REASONING; use letters, numbers, dot, underscore, or hyphen')"
+            ;;
+    esac
+
+    save_profile_override "$name" "$P_URL" "$new_model" "$new_reasoning" "$old_review"
     [[ "$(current_profile)" == "$name" ]] && write_config_for_profile "$name"
+
     ui_ok "$(L "$name 默认模型 → $new_model" "$name default model → $new_model")"
+    if [[ -n "$new_reasoning" ]]; then
+        ui_info "$(L "推理强度 → $new_reasoning" "reasoning effort → $new_reasoning")"
+    else
+        ui_info "$(L '推理强度 → Auto（不写 model_reasoning_effort）' 'reasoning effort → Auto (model_reasoning_effort unset)')"
+    fi
 }
 
 cmd_endpoint() {
@@ -1516,6 +1543,116 @@ PY
     return 1
 }
 
+cmd_reasoning_picker() {
+    local name="$1" new_model="$2" choice manual current_reasoning
+
+    load_profile "$name"
+    current_reasoning="$P_REASONING"
+    SELECTED_REASONING=""
+
+    while true; do
+        clear || true
+        ui_header "REASONING // ${name^^}"
+
+        ui_section "$(L '即将应用' 'PENDING MODEL')"
+        ui_kv "$(L '模型' 'model')" "$new_model"
+        if [[ -n "$current_reasoning" ]]; then
+            ui_kv "$(L '当前推理强度' 'current reasoning')" "$current_reasoning"
+        else
+            ui_kv "$(L '当前推理强度' 'current reasoning')" "$(L 'Auto / 未指定' 'Auto / unset')"
+        fi
+
+        ui_section "$(L '推理强度' 'REASONING EFFORT')"
+        ui_menu_item "Enter" "Auto" "$(L '推荐 · 不写 model_reasoning_effort' 'recommended · leave model_reasoning_effort unset')"
+        if [[ -n "$current_reasoning" ]]; then
+            ui_menu_item "K" "$(L '保持当前' 'Keep current')" "$current_reasoning"
+        else
+            ui_menu_item "K" "$(L '保持当前' 'Keep current')" "$(L 'Auto / 未指定' 'Auto / unset')"
+        fi
+        ui_menu_item "N" "None" "$(L '仅模型支持时使用' 'use only when supported by the model')"
+        ui_menu_item "1" "Minimal" ""
+        ui_menu_item "2" "Low" "$(L '更快 / 较少推理' 'faster / less reasoning')"
+        ui_menu_item "3" "Medium" "$(L '速度与推理平衡' 'balanced')"
+        ui_menu_item "4" "High" "$(L '更多推理' 'more reasoning')"
+        ui_menu_item "5" "XHigh" "$(L '最强 / 通常更慢' 'deepest / usually slower')"
+        ui_menu_item "M" "$(L '手动填写' 'Manual value')" "$(L '服务商自定义 effort' 'provider-specific effort')"
+        ui_menu_item "0" "$(L '取消，不修改模型' 'Cancel without changing model')" ""
+
+        printf '\n'
+        ui_info "$(L '不同模型支持的 effort 不完全一致；Auto 对未知/自定义模型最安全。' 'Supported effort values vary by model; Auto is safest for unknown/custom models.')"
+        printf '\n%s›%s ' "$UI_PINK" "$UI_RESET"
+        IFS= read -r choice
+
+        case "$choice" in
+            ""|a|A)
+                SELECTED_REASONING="auto"
+                return 0
+                ;;
+            k|K)
+                SELECTED_REASONING="keep"
+                return 0
+                ;;
+            n|N)
+                SELECTED_REASONING="none"
+                return 0
+                ;;
+            1)
+                SELECTED_REASONING="minimal"
+                return 0
+                ;;
+            2)
+                SELECTED_REASONING="low"
+                return 0
+                ;;
+            3)
+                SELECTED_REASONING="medium"
+                return 0
+                ;;
+            4)
+                SELECTED_REASONING="high"
+                return 0
+                ;;
+            5)
+                SELECTED_REASONING="xhigh"
+                return 0
+                ;;
+            m|M)
+                printf '%s' "$(L '自定义 reasoning effort: ' 'Custom reasoning effort: ')"
+                IFS= read -r manual
+                [[ -n "$manual" ]] || {
+                    ui_warn "$(L '不能为空' 'Value cannot be empty')"
+                    sleep 0.5
+                    continue
+                }
+                [[ "$manual" =~ ^[A-Za-z0-9._-]+$ ]] || {
+                    ui_warn "$(L '格式非法，只能使用字母、数字、点、下划线和短横线' 'Invalid format; use letters, numbers, dot, underscore, or hyphen')"
+                    sleep 0.7
+                    continue
+                }
+                SELECTED_REASONING="${manual,,}"
+                return 0
+                ;;
+            0|q|Q)
+                return 1
+                ;;
+            *)
+                ui_warn "$(L '无效选择' 'Invalid choice')"
+                sleep 0.5
+                ;;
+        esac
+    done
+}
+
+apply_model_from_picker() {
+    local name="$1" model="$2"
+    if cmd_reasoning_picker "$name" "$model"; then
+        cmd_model "$name" "$model" "$SELECTED_REASONING"
+        return 0
+    fi
+    ui_info "$(L '已取消，模型和推理强度都没有修改。' 'Cancelled; model and reasoning effort were not changed.')"
+    return 1
+}
+
 cmd_model_picker() {
     local name="$1" choice current value i
     local -a models=()
@@ -1527,6 +1664,11 @@ cmd_model_picker() {
         clear || true
         ui_header "MODEL // ${name^^}"
         ui_kv "$(L '当前模型' 'current model')" "$current"
+        if [[ -n "$P_REASONING" ]]; then
+            ui_kv "$(L '当前推理强度' 'current reasoning')" "$P_REASONING"
+        else
+            ui_kv "$(L '当前推理强度' 'current reasoning')" "$(L 'Auto / 未指定' 'Auto / unset')"
+        fi
         ui_kv "endpoint" "$(provider_host "$P_URL")"
         printf '\n'
 
@@ -1547,16 +1689,26 @@ cmd_model_picker() {
             printf '\n%s›%s ' "$UI_PINK" "$UI_RESET"
             read -r choice
             case "$choice" in
-                k|K) cmd_key set "$name"; ui_pause ;;
+                k|K)
+                    cmd_key set "$name"
+                    ui_pause
+                    ;;
                 m|M)
                     printf '%s [%s]: ' "$(L '模型 ID' 'Model ID')" "$current"
                     IFS= read -r value
-                    [[ -n "$value" ]] && cmd_model "$name" "$value"
+                    if [[ -n "$value" ]]; then
+                        apply_model_from_picker "$name" "$value" || true
+                    fi
                     ui_pause
                     return
                     ;;
-                0|q|Q) return ;;
-                *) ui_warn "$(L '无效选择' 'Invalid choice')"; sleep 0.5 ;;
+                0|q|Q)
+                    return
+                    ;;
+                *)
+                    ui_warn "$(L '无效选择' 'Invalid choice')"
+                    sleep 0.5
+                    ;;
             esac
             continue
         fi
@@ -1573,16 +1725,25 @@ cmd_model_picker() {
             printf '\n%s›%s ' "$UI_PINK" "$UI_RESET"
             read -r choice
             case "$choice" in
-                r|R) continue ;;
+                r|R)
+                    continue
+                    ;;
                 m|M)
                     printf '%s [%s]: ' "$(L '模型 ID' 'Model ID')" "$current"
                     IFS= read -r value
-                    [[ -n "$value" ]] && cmd_model "$name" "$value"
+                    if [[ -n "$value" ]]; then
+                        apply_model_from_picker "$name" "$value" || true
+                    fi
                     ui_pause
                     return
                     ;;
-                0|q|Q) return ;;
-                *) ui_warn "$(L '无效选择' 'Invalid choice')"; sleep 0.5 ;;
+                0|q|Q)
+                    return
+                    ;;
+                *)
+                    ui_warn "$(L '无效选择' 'Invalid choice')"
+                    sleep 0.5
+                    ;;
             esac
             continue
         fi
@@ -1611,19 +1772,25 @@ cmd_model_picker() {
         read -r choice
 
         case "$choice" in
-            r|R) continue ;;
+            r|R)
+                continue
+                ;;
             m|M)
                 printf '%s [%s]: ' "$(L '模型 ID' 'Model ID')" "$current"
                 IFS= read -r value
-                [[ -n "$value" ]] && cmd_model "$name" "$value"
+                if [[ -n "$value" ]]; then
+                    apply_model_from_picker "$name" "$value" || true
+                fi
                 ui_pause
                 return
                 ;;
-            0|q|Q) return ;;
+            0|q|Q)
+                return
+                ;;
             *)
                 if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#models[@]} && choice <= 60 )); then
                     value="${models[$((choice-1))]}"
-                    cmd_model "$name" "$value"
+                    apply_model_from_picker "$name" "$value" || true
                     ui_pause
                     return
                 fi
@@ -3646,7 +3813,7 @@ ${UI_BOLD}中转站 / Profile${UI_RESET}
   cr add NAME BASE_URL MODEL [PROVIDER_ID] [AUTH]
   cr show-config              查看当前 config.toml
   cr providers                 打开中转站管理器
-  cr model PROFILE MODEL       修改当前用户默认模型
+  cr model PROFILE MODEL [REASONING|auto|keep]\n                               修改模型；默认 Auto 清除旧 reasoning
   cr endpoint PROFILE URL      修改当前用户 API 地址
   cr speed [PROFILE]           无代理 HTTPS 测速
   cr delete PROFILE            删除自定义中转站
