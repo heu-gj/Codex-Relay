@@ -2458,8 +2458,41 @@ REPAIRPY
 # Dashboard 状态
 # -----------------------------
 dashboard_cli_version() {
-    command -v codex >/dev/null 2>&1 || { printf '%s' "N/A"; return; }
-    codex --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || printf '%s' "?"
+    local file="$CACHE_DIR/cli-version.txt"
+    if [[ -s "$file" ]]; then
+        cat "$file"
+        return
+    fi
+    refresh_dashboard_cli
+    cat "$file"
+}
+
+refresh_dashboard_cli() {
+    local file="$CACHE_DIR/cli-version.txt" out
+    if ! command -v codex >/dev/null 2>&1; then
+        printf '%s\n' "N/A" > "$file"
+        return
+    fi
+
+    out="$(codex --version 2>/dev/null || true)"
+    printf '%s\n' "$out" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 > "$file"
+    [[ -s "$file" ]] || printf '%s\n' "?" > "$file"
+}
+
+dashboard_process_count() {
+    ps -u "$(id -u)" -o comm= 2>/dev/null | awk '
+        /^codex$/ {n++; next}
+        /^codex-/ && $0 !~ /^codex-relay/ {n++}
+        END {print n+0}
+    '
+}
+
+dashboard_url_host() {
+    local url="$1" host
+    host="${url#*://}"
+    host="${host%%/*}"
+    host="${host##*@}"
+    printf '%s' "$host"
 }
 
 dashboard_daemon_version() {
@@ -2519,6 +2552,9 @@ refresh_dashboard_network() {
 
 dashboard_refresh() {
     local name="${1:-$(current_profile)}"
+    ui_step "$(L '刷新 CLI 版本…' 'Refreshing CLI version…')"
+    refresh_dashboard_cli || true
+
     ui_step "$(L '刷新网络状态…' 'Refreshing network status…')"
     refresh_dashboard_network "$name" || true
 
@@ -2571,7 +2607,7 @@ cmd_menu_network() {
         ui_kv "profile" "$name"
         ui_kv "Codex CLI" "$(dashboard_cli_version)"
         ui_kv "daemon" "$(dashboard_daemon_version)"
-        ui_kv "$(L '进程' 'processes')" "$(codex_process_count)"
+        ui_kv "$(L '进程' 'processes')" "$(dashboard_process_count)"
         ui_kv "$(L '直连' 'network')" "$(dashboard_network_summary "$name")"
         printf '\n'
         ui_menu_item "1" "$(L '网络诊断' 'Network diagnostics')" "DNS · TCP DNS · HTTPS"
@@ -2645,8 +2681,8 @@ cmd_menu() {
         if [[ "$cli" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$daemon" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$cli" != "$daemon" ]]; then
             daemon_text="$daemon ⚠ $(L '版本不一致' 'VERSION MISMATCH')"
         fi
-        processes="$(codex_process_count)"
-        host="$(url_host "$P_URL" 2>/dev/null || printf '%s' "$P_URL")"
+        processes="$(dashboard_process_count)"
+        host="$(dashboard_url_host "$P_URL")"
 
         if env | grep -qiE '^(http|https|all)_proxy='; then
             proxy_text="$(L 'DETECTED → 启动时禁用' 'DETECTED → disabled on launch')"
@@ -2674,7 +2710,7 @@ cmd_menu() {
         ui_menu_item "4" "$(L '设置' 'Settings')" "$(L 'Key · 配置 · 语言 · 状态' 'key · config · language · status')"
         printf '\n'
         ui_menu_item "Enter" "$(L '启动当前 Codex' 'Launch current Codex')" "$name"
-        ui_menu_item "R" "$(L '刷新状态' 'Refresh status')" "$(L '网络 + daemon' 'network + daemon')"
+        ui_menu_item "R" "$(L '刷新状态' 'Refresh status')" "$(L 'CLI + 网络 + daemon' 'CLI + network + daemon')"
         ui_menu_item "Q" "$(L '退出' 'Exit')" ""
 
         printf '\n%s›%s %s%s%s  ' "$UI_PINK" "$UI_RESET" "$UI_BOLD" "$(L '请选择操作' 'Choose an action')" "$UI_RESET"
