@@ -2,13 +2,1857 @@
 set -euo pipefail
 
 CODEX_DIR="${CODEX_HOME:-$HOME/.codex}"
+RELAY_DIR="${CODEX_RELAY_HOME:-$HOME/.codex-relay}"
+
+# Codex 自己的数据只放在 ~/.codex；codex-relay 的状态单独放在 ~/.codex-relay。
 CONFIG="$CODEX_DIR/config.toml"
-CURRENT="$CODEX_DIR/.relay-current"
-REGISTRY="$CODEX_DIR/relays.tsv"
-OFFICIAL_MODEL_FILE="$CODEX_DIR/.official-model"
+CURRENT="$RELAY_DIR/current"
+REGISTRY="$RELAY_DIR/relays.tsv"
+OFFICIAL_MODEL_FILE="$RELAY_DIR/official-model"
+LANGUAGE_FILE="$RELAY_DIR/language"
 HOSTS_TAG="codex-relay-manager"
 
-mkdir -p "$CODEX_DIR" "$CODEX_DIR/config-backups" "$CODEX_DIR/history-backups"
+mkdir -p "$CODEX_DIR" "$RELAY_DIR" "$RELAY_DIR/backups/config" "$RELAY_DIR/backups/history"
+
+# 从旧版 ~/.codex 中迁移少量 relay 状态文件。只迁移管理器自己的文件，
+# 不触碰 auth.json、sessions、SQLite 或其他 Codex 数据。
+migrate_legacy_relay_state() {
+    local old new
+    while IFS=
+# -----------------------------
+# 基础工具
+# -----------------------------
+die() {
+    echo "ERROR: $*" >&2
+    exit 1
+}
+
+need() {
+    command -v "$1" >/dev/null 2>&1 || die "缺少命令: $1"
+}
+
+clean_proxy_env() {
+    unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY || true
+}
+
+is_ipv4() {
+    [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
+}
+
+
+# -----------------------------
+# UI / 终端视觉层
+# -----------------------------
+ui_init() {
+    if [[ -t 1 && "${TERM:-}" != "dumb" && -z "${NO_COLOR:-}" ]]; then
+        UI_RESET=$'\033[0m'
+        UI_BOLD=$'\033[1m'
+        UI_DIM=$'\033[2m'
+        UI_CYAN=$'\033[38;5;51m'
+        UI_BLUE=$'\033[38;5;75m'
+        UI_PURPLE=$'\033[38;5;141m'
+        UI_PINK=$'\033[38;5;213m'
+        UI_GREEN=$'\033[38;5;84m'
+        UI_YELLOW=$'\033[38;5;220m'
+        UI_RED=$'\033[38;5;203m'
+        UI_GRAY=$'\033[38;5;245m'
+        UI_WHITE=$'\033[38;5;255m'
+        UI_BG=$'\033[48;5;236m'
+    else
+        UI_RESET="" UI_BOLD="" UI_DIM="" UI_CYAN="" UI_BLUE=""
+        UI_PURPLE="" UI_PINK="" UI_GREEN="" UI_YELLOW="" UI_RED=""
+        UI_GRAY="" UI_WHITE="" UI_BG=""
+    fi
+}
+ui_init
+
+ui_width() {
+    local w="${COLUMNS:-}"
+    if [[ -z "$w" ]] && command -v tput >/dev/null 2>&1; then
+        w="$(tput cols 2>/dev/null || true)"
+    fi
+    [[ "$w" =~ ^[0-9]+$ ]] || w=80
+    (( w > 92 )) && w=92
+    (( w < 64 )) && w=64
+    printf '%s' "$w"
+}
+
+ui_rule() {
+    local w i
+    w="$(ui_width)"
+    printf '%s' "$UI_DIM$UI_BLUE"
+    for ((i=0; i<w; i++)); do printf '─'; done
+    printf '%s\n' "$UI_RESET"
+}
+
+ui_header() {
+    local subtitle="${1:-CONTROL CENTER}"
+    local w inner title pad_l pad_r i
+    w="$(ui_width)"
+    inner=$((w-2))
+    title=" CODEX RELAY // ${subtitle} "
+    pad_l=$(((inner-${#title})/2))
+    (( pad_l < 0 )) && pad_l=0
+    pad_r=$((inner-${#title}-pad_l))
+    (( pad_r < 0 )) && pad_r=0
+
+    printf '%s╭' "$UI_CYAN"
+    for ((i=0; i<inner; i++)); do printf '─'; done
+    printf '╮%s\n' "$UI_RESET"
+    printf '%s│%s' "$UI_CYAN" "$UI_RESET"
+    printf '%*s' "$pad_l" ''
+    printf '%s%s%s%s' "$UI_BOLD" "$UI_PINK" "$title" "$UI_RESET"
+    printf '%*s' "$pad_r" ''
+    printf '%s│%s\n' "$UI_CYAN" "$UI_RESET"
+    printf '%s╰' "$UI_CYAN"
+    for ((i=0; i<inner; i++)); do printf '─'; done
+    printf '╯%s\n' "$UI_RESET"
+}
+
+ui_section() {
+    printf '\n%s◆ %s%s%s\n' "$UI_PURPLE" "$UI_BOLD" "$*" "$UI_RESET"
+}
+
+ui_kv() {
+    local k="$1" v="${2:-}"
+    printf '  %s%-11s%s %s%s%s\n' "$UI_GRAY" "$k" "$UI_RESET" "$UI_WHITE" "$v" "$UI_RESET"
+}
+
+ui_ok()   { printf '%s✓%s %s\n' "$UI_GREEN" "$UI_RESET" "$*"; }
+ui_fail() { printf '%s✕%s %s\n' "$UI_RED" "$UI_RESET" "$*" >&2; }
+ui_warn() { printf '%s!%s %s\n' "$UI_YELLOW" "$UI_RESET" "$*"; }
+ui_info() { printf '%s●%s %s\n' "$UI_CYAN" "$UI_RESET" "$*"; }
+ui_step() { printf '%s↻%s %s%s%s\n' "$UI_BLUE" "$UI_RESET" "$UI_BOLD" "$*" "$UI_RESET"; }
+
+ui_pause() {
+    local _
+    printf '\n%s按 Enter 返回…%s' "$UI_DIM" "$UI_RESET"
+    read -r _
+}
+
+ui_proxy_state() {
+    if env | grep -qiE '^(http|https|all)_proxy='; then
+        printf '%sDETECTED%s' "$UI_YELLOW" "$UI_RESET"
+    else
+        printf '%sCLEAN%s' "$UI_GREEN" "$UI_RESET"
+    fi
+}
+
+ui_profile_card() {
+    local name provider model url reasoning
+    name="$(current_profile)"
+    if profile_exists "$name"; then
+        load_profile "$name"
+        provider="$P_PROVIDER"
+        model="$P_MODEL"
+        url="$P_URL"
+        reasoning="$P_REASONING"
+    else
+        provider="?" model="?" url="?" reasoning=""
+    fi
+
+    printf '\n%s┌─ ACTIVE PROFILE %s' "$UI_BLUE" "$UI_RESET"
+    printf '%s' "$UI_DIM"
+    printf '────────────────────────────────────────'
+    printf '%s\n' "$UI_RESET"
+    printf '  %s%-10s%s %s%s%s\n' "$UI_GRAY" 'profile' "$UI_RESET" "$UI_BOLD$UI_CYAN" "$name" "$UI_RESET"
+    printf '  %s%-10s%s %s\n' "$UI_GRAY" 'provider' "$UI_RESET" "$provider"
+    printf '  %s%-10s%s %s\n' "$UI_GRAY" 'model' "$UI_RESET" "$model"
+    [[ -n "$reasoning" ]] && printf '  %s%-10s%s %s\n' "$UI_GRAY" 'reasoning' "$UI_RESET" "$reasoning"
+    printf '  %s%-10s%s %s\n' "$UI_GRAY" 'endpoint' "$UI_RESET" "$url"
+    printf '  %s%-10s%s ' "$UI_GRAY" 'shell proxy' "$UI_RESET"
+    ui_proxy_state
+    printf '\n'
+    printf '%s└────────────────────────────────────────────────────%s\n' "$UI_BLUE" "$UI_RESET"
+}
+
+ui_menu_item() {
+    local key="$1" label="$2" hint="${3:-}"
+    printf '  %s[%2s]%s  %s%-28s%s %s%s%s\n' \
+        "$UI_CYAN" "$key" "$UI_RESET" \
+        "$UI_WHITE" "$label" "$UI_RESET" \
+        "$UI_DIM" "$hint" "$UI_RESET"
+}
+
+# -----------------------------
+# Profile 定义
+# -----------------------------
+# 输出变量：
+# P_NAME P_KIND P_PROVIDER P_URL P_MODEL P_REASONING P_REVIEW P_GOALS P_AUTH
+load_profile() {
+    local name="$1"
+
+    P_NAME="$name"
+    P_KIND="custom"
+    P_PROVIDER=""
+    P_URL=""
+    P_MODEL=""
+    P_REASONING=""
+    P_REVIEW=""
+    P_GOALS="false"
+    P_AUTH="openai"
+
+    case "$name" in
+        baibai)
+            P_PROVIDER="baibai"
+            P_URL="https://api.sharesai.xyz/v1"
+            P_MODEL="gpt-5.6-sol"
+            P_REASONING="xhigh"
+            P_AUTH="openai"
+            ;;
+
+        nova)
+            P_PROVIDER="OpenAI"
+            P_URL="https://ai.novacode.top"
+            P_MODEL="gpt-5.5"
+            P_REVIEW="gpt-5.5"
+            P_GOALS="true"
+            P_AUTH="openai"
+            ;;
+
+        official)
+            P_KIND="official"
+            P_PROVIDER="openai"
+            P_URL="https://api.openai.com/v1"
+            [[ -s "$OFFICIAL_MODEL_FILE" ]] || \
+                die "官方 OpenAI 尚未设置模型。先运行: cr official MODEL"
+            P_MODEL="$(cat "$OFFICIAL_MODEL_FILE")"
+            P_AUTH="openai"
+            ;;
+
+        *)
+            local row
+            row="$(awk -F '\t' -v n="$name" '$1==n {print; exit}' "$REGISTRY")"
+            [[ -n "$row" ]] || die "没有这个 profile: $name"
+
+            IFS=$'\t' read -r \
+                P_NAME P_PROVIDER P_URL P_MODEL P_AUTH P_REASONING P_REVIEW P_GOALS \
+                <<< "$row"
+
+            P_KIND="custom"
+            P_AUTH="${P_AUTH:-openai}"
+            P_GOALS="${P_GOALS:-false}"
+            [[ "$P_REASONING" == "-" ]] && P_REASONING=""
+            [[ "$P_REVIEW" == "-" ]] && P_REVIEW=""
+            ;;
+    esac
+}
+
+profile_exists() {
+    local name="$1"
+    case "$name" in
+        baibai|nova)
+            return 0
+            ;;
+        official)
+            [[ -s "$OFFICIAL_MODEL_FILE" ]]
+            return
+            ;;
+        *)
+            awk -F '\t' -v n="$name" '$1==n {found=1} END{exit !found}' "$REGISTRY"
+            ;;
+    esac
+}
+
+current_profile() {
+    if [[ -s "$CURRENT" ]]; then
+        cat "$CURRENT"
+    else
+        echo "nova"
+    fi
+}
+
+# -----------------------------
+# 真正修改 ~/.codex/config.toml
+# -----------------------------
+write_config_for_profile() {
+    local name="$1"
+    load_profile "$name"
+
+    need python3
+
+    local stamp backup=""
+    stamp="$(date +%Y%m%d-%H%M%S)"
+
+    if [[ -f "$CONFIG" ]]; then
+        backup="$RELAY_DIR/backups/config/config.toml.$stamp"
+        cp -a "$CONFIG" "$backup"
+    fi
+
+    python3 - \
+        "$CONFIG" \
+        "$P_KIND" \
+        "$P_PROVIDER" \
+        "$P_URL" \
+        "$P_MODEL" \
+        "$P_REASONING" \
+        "$P_REVIEW" \
+        "$P_GOALS" \
+        "$P_AUTH" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+(
+    config_path,
+    kind,
+    provider,
+    base_url,
+    model,
+    reasoning,
+    review_model,
+    goals,
+    auth,
+) = sys.argv[1:]
+
+path = Path(config_path)
+text = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+lines = text.splitlines()
+
+managed_root = {
+    "model_provider",
+    "model",
+    "review_model",
+    "model_reasoning_effort",
+    "disable_response_storage",
+    "model_catalog_json",  # 关键：切换时清掉旧的无效 catalog 路径
+    "network_access",
+    "windows_wsl_setup_acknowledged",
+}
+
+section_re = re.compile(r"^\s*\[([^\]]+)\]\s*(?:#.*)?$")
+key_re = re.compile(r"^\s*([A-Za-z0-9_-]+)\s*=")
+managed_provider_sections = {"model_providers.baibai", "model_providers.OpenAI"}
+if kind == "custom":
+    managed_provider_sections.add(f"model_providers.{provider}")
+
+out = []
+section = None
+skip_section = False
+
+for line in lines:
+    sm = section_re.match(line)
+    if sm:
+        section = sm.group(1).strip()
+        skip_section = section in managed_provider_sections
+        if skip_section:
+            continue
+        out.append(line)
+        continue
+
+    if skip_section:
+        continue
+
+    km = key_re.match(line)
+    if km:
+        key = km.group(1)
+        if section is None and key in managed_root:
+            continue
+        if section == "features" and key == "goals":
+            continue
+
+    out.append(line)
+
+# 清理开头多余空行
+while out and not out[0].strip():
+    out.pop(0)
+
+# 如 Nova 需要 goals=true，则合并进已有 [features]；否则不写 goals
+if goals.lower() == "true":
+    feature_idx = None
+    for i, line in enumerate(out):
+        sm = section_re.match(line)
+        if sm and sm.group(1).strip() == "features":
+            feature_idx = i
+            break
+
+    if feature_idx is not None:
+        out.insert(feature_idx + 1, "goals = true")
+    else:
+        if out and out[-1].strip():
+            out.append("")
+        out.extend(["[features]", "goals = true"])
+
+# 新的顶层配置永远放在最前面
+root = [
+    f'model_provider = "{provider}"',
+    f'model = "{model}"',
+]
+
+if review_model:
+    root.append(f'review_model = "{review_model}"')
+if reasoning:
+    root.append(f'model_reasoning_effort = "{reasoning}"')
+
+root.extend([
+    'network_access = "enabled"',
+    'disable_response_storage = true',
+])
+
+if kind == "custom" and provider == "OpenAI":
+    root.append("windows_wsl_setup_acknowledged = true")
+
+# 注意：这里故意不写 model_catalog_json。
+# 之前 ~/.codex/codex-models.json 不存在，会导致 Codex 启动时报 os error 2。
+
+result = root + [""] + out
+
+# 自定义 provider 追加/重建 provider section
+if kind == "custom":
+    if result and result[-1].strip():
+        result.append("")
+
+    result.extend([
+        f"[model_providers.{provider}]",
+        'name = "OpenAI"',
+        f'base_url = "{base_url}"',
+        'wire_api = "responses"',
+    ])
+
+    if auth == "openai":
+        result.append("requires_openai_auth = true")
+    elif auth.startswith("env:"):
+        var = auth.split(":", 1)[1]
+        result.extend([
+            "requires_openai_auth = false",
+            f'env_key = "{var}"',
+        ])
+    elif auth == "none":
+        result.append("requires_openai_auth = false")
+    else:
+        raise SystemExit(f"unknown auth mode: {auth}")
+
+# 去掉连续过多空行
+clean = []
+blank = 0
+for line in result:
+    if line.strip():
+        blank = 0
+        clean.append(line.rstrip())
+    else:
+        blank += 1
+        if blank <= 1:
+            clean.append("")
+
+path.write_text("\n".join(clean).rstrip() + "\n", encoding="utf-8")
+PY
+
+    printf '%s\n' "$name" > "$CURRENT"
+
+    ui_ok "config.toml 已切换 → $name"
+    ui_kv "provider" "$P_PROVIDER"
+    ui_kv "model" "$P_MODEL"
+    [[ -n "$P_REASONING" ]] && ui_kv "reasoning" "$P_REASONING"
+    [[ -n "$P_URL" ]] && ui_kv "base_url" "$P_URL"
+    [[ -n "$backup" ]] && ui_kv "backup" "$backup"
+}
+
+# -----------------------------
+# 网络 / 无 VPN 直连
+# -----------------------------
+url_host() {
+    python3 - "$1" <<'PY'
+import sys
+from urllib.parse import urlparse
+u=urlparse(sys.argv[1])
+if not u.hostname:
+    raise SystemExit(1)
+print(u.hostname)
+PY
+}
+
+url_port() {
+    python3 - "$1" <<'PY'
+import sys
+from urllib.parse import urlparse
+u=urlparse(sys.argv[1])
+print(u.port or (443 if u.scheme == "https" else 80))
+PY
+}
+
+direct_curl() {
+    local url="$1"
+    clean_proxy_env
+
+    local code
+    code="$(
+        curl --noproxy '*' -4 -sS \
+            -o /dev/null \
+            -w '%{http_code}' \
+            --connect-timeout 7 \
+            --max-time 15 \
+            "$url" 2>/dev/null
+    )" || return 1
+
+    [[ -n "$code" && "$code" != "000" ]] || return 1
+    echo "$code"
+}
+
+resolved_curl() {
+    local url="$1" host="$2" port="$3" ip="$4"
+    clean_proxy_env
+
+    local code
+    code="$(
+        curl --noproxy '*' -4 -sS \
+            -o /dev/null \
+            -w '%{http_code}' \
+            --resolve "${host}:${port}:${ip}" \
+            --connect-timeout 7 \
+            --max-time 15 \
+            "$url" 2>/dev/null
+    )" || return 1
+
+    [[ -n "$code" && "$code" != "000" ]] || return 1
+    echo "$code"
+}
+
+tcp_dns_ips() {
+    local host="$1" dns out
+    need dig
+
+    for dns in 8.8.8.8 1.1.1.1; do
+        out="$(
+            timeout 10 dig +tcp +time=4 +tries=1 \
+                @"$dns" "$host" A +short 2>/dev/null || true
+        )"
+
+        out="$(printf '%s\n' "$out" | awk '
+            /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {
+                if (!seen[$0]++) print
+            }
+        ')"
+
+        if [[ -n "$out" ]]; then
+            printf '%s\n' "$out"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+install_hosts_entry() {
+    local host="$1" ip="$2"
+
+    sudo python3 - "$host" "$ip" "$HOSTS_TAG" <<'PY'
+import shutil
+import sys
+import time
+from pathlib import Path
+
+host, new_ip, tag = sys.argv[1:]
+p = Path("/etc/hosts")
+backup = Path(f"/etc/hosts.codex-relay-backup-{time.strftime('%Y%m%d-%H%M%S')}")
+shutil.copy2(p, backup)
+
+out=[]
+for line in p.read_text(errors="replace").splitlines():
+    stripped=line.strip()
+    if not stripped or stripped.startswith("#"):
+        out.append(line)
+        continue
+
+    body, sep, comment = line.partition("#")
+    parts=body.split()
+    if len(parts) < 2:
+        out.append(line)
+        continue
+
+    old_ip=parts[0]
+    names=parts[1:]
+    if host not in names:
+        out.append(line)
+        continue
+
+    names=[n for n in names if n != host]
+    if names:
+        newline=old_ip + "\t" + " ".join(names)
+        if sep and comment.strip():
+            newline += "\t# " + comment.strip()
+        out.append(newline)
+
+out.append(f"{new_ip}\t{host}\t# {tag}")
+p.write_text("\n".join(out) + "\n")
+
+print("hosts backup:", backup)
+print("installed:", new_ip, host)
+PY
+}
+
+cmd_check() {
+    local name="${1:-$(current_profile)}"
+    load_profile "$name"
+    need curl
+
+    local host code
+    host="$(url_host "$P_URL")"
+
+    ui_header "NETWORK DIAGNOSTICS"
+    ui_kv "profile" "$name"
+    ui_kv "provider" "$P_PROVIDER"
+    ui_kv "model" "$P_MODEL"
+    ui_kv "endpoint" "$P_URL"
+
+    ui_section "Proxy environment"
+    if env | grep -iE '^(http|https|all|no)_proxy='; then
+        :
+    else
+        ui_ok "没有检测到代理环境变量"
+    fi
+
+    ui_section "System resolver"
+    if timeout 6 getent ahostsv4 "$host"; then
+        ui_ok "系统 resolver 有响应"
+    else
+        ui_warn "系统 resolver 未能及时返回 IPv4 地址"
+    fi
+
+    ui_section "TCP DNS / 8.8.8.8"
+    if command -v dig >/dev/null 2>&1; then
+        if dig +tcp +time=4 +tries=1 @8.8.8.8 "$host" A +short; then
+            :
+        else
+            ui_warn "TCP DNS 查询失败"
+        fi
+    else
+        ui_warn "未安装 dig；可执行 sudo apt install dnsutils"
+    fi
+
+    ui_section "Direct HTTPS / no proxy"
+    if code="$(direct_curl "$P_URL")"; then
+        ui_ok "直连成功 · HTTP $code"
+        return 0
+    fi
+
+    ui_fail "当前无法直接访问 $host"
+    return 1
+}
+
+cmd_direct() {
+    local name="${1:-$(current_profile)}"
+    load_profile "$name"
+    need curl
+    need python3
+
+    ui_header "DIRECT CONNECT"
+    ui_kv "profile" "$name"
+    ui_kv "endpoint" "$P_URL"
+
+    local code
+    ui_step "1/4  测试当前无代理直连"
+    if code="$(direct_curl "$P_URL")"; then
+        ui_ok "已经可以直接访问 · HTTP $code"
+        ui_info "无需修改 /etc/hosts"
+        return 0
+    fi
+    ui_warn "普通直连失败"
+
+    if [[ "$P_KIND" == "official" ]]; then
+        ui_fail "官方 OpenAI 当前无法直连"
+        ui_info "为避免固定官方/CDN IP，不会给官方 OpenAI 写 /etc/hosts"
+        return 1
+    fi
+
+    need dig
+
+    local host port ips ip working_ip="" rcode
+    host="$(url_host "$P_URL")"
+    port="$(url_port "$P_URL")"
+
+    ui_step "2/4  使用 TCP DNS 获取候选 IPv4"
+    ips="$(tcp_dns_ips "$host" || true)"
+    [[ -n "$ips" ]] || die "TCP DNS 也无法解析 $host"
+    while read -r ip; do
+        [[ -n "$ip" ]] && printf '      %s•%s %s\n' "$UI_CYAN" "$UI_RESET" "$ip"
+    done <<< "$ips"
+
+    ui_step "3/4  逐个验证 TLS / HTTPS"
+    while read -r ip; do
+        [[ -n "$ip" ]] || continue
+        printf '      testing %-15s ' "$ip"
+        if rcode="$(resolved_curl "$P_URL" "$host" "$port" "$ip")"; then
+            printf '%sOK%s  HTTP %s\n' "$UI_GREEN" "$UI_RESET" "$rcode"
+            working_ip="$ip"
+            break
+        fi
+        printf '%sFAIL%s\n' "$UI_RED" "$UI_RESET"
+    done <<< "$ips"
+
+    [[ -n "$working_ip" ]] || die "TCP DNS 有地址，但 HTTPS 验证全部失败"
+
+    ui_step "4/4  安装经过验证的 hosts 映射"
+    install_hosts_entry "$host" "$working_ip"
+
+    if code="$(direct_curl "$P_URL")"; then
+        ui_ok "直连配置完成 · HTTP $code"
+        ui_kv "host" "$host"
+        ui_kv "IPv4" "$working_ip"
+    else
+        die "写入 hosts 后仍然无法访问"
+    fi
+}
+
+# -----------------------------
+# Codex 启动
+# -----------------------------
+cmd_run() {
+    local name
+    name="$(current_profile)"
+    load_profile "$name"
+
+    need codex
+    need python3
+
+    local host no_proxy
+    host="$(url_host "$P_URL")"
+    no_proxy="127.0.0.1,localhost,::1,$host"
+
+    ui_header "LAUNCH"
+    ui_ok "正在启动 Codex"
+    ui_kv "profile" "$name"
+    ui_kv "provider" "$P_PROVIDER"
+    ui_kv "model" "$P_MODEL"
+    ui_kv "proxy" "disabled"
+    ui_kv "NO_PROXY" "$no_proxy"
+    printf '\n'
+
+    exec env \
+        -u http_proxy \
+        -u https_proxy \
+        -u HTTP_PROXY \
+        -u HTTPS_PROXY \
+        -u all_proxy \
+        -u ALL_PROXY \
+        NO_PROXY="$no_proxy" \
+        no_proxy="$no_proxy" \
+        codex "$@"
+}
+
+# -----------------------------
+# Profile 管理
+# -----------------------------
+cmd_use() {
+    [[ $# -eq 1 ]] || die "用法: cr use NAME"
+    load_profile "$1"
+    write_config_for_profile "$1"
+}
+
+cmd_setup() {
+    [[ $# -eq 1 ]] || die "用法: cr setup NAME"
+    write_config_for_profile "$1"
+    echo
+    cmd_direct "$1"
+}
+
+cmd_official() {
+    [[ $# -eq 1 ]] || die "用法: cr official MODEL"
+    printf '%s\n' "$1" > "$OFFICIAL_MODEL_FILE"
+    echo "已设置官方 OpenAI model: $1"
+    echo "切换命令: cr use official"
+}
+
+cmd_add() {
+    [[ $# -ge 3 && $# -le 5 ]] || {
+        echo "用法:"
+        echo "  cr add NAME BASE_URL MODEL [PROVIDER_ID] [AUTH]"
+        echo
+        echo "AUTH: openai | env:变量名 | none"
+        exit 1
+    }
+
+    local name="$1" url="$2" model="$3"
+    local provider="${4:-$name}"
+    local auth="${5:-openai}"
+
+    [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || die "NAME 格式非法"
+    [[ "$provider" =~ ^[A-Za-z0-9_-]+$ ]] || die "PROVIDER_ID 格式非法"
+    [[ "$url" =~ ^https?:// ]] || die "BASE_URL 必须以 http:// 或 https:// 开头"
+
+    case "$auth" in
+        openai|none|env:*) ;;
+        *) die "AUTH 必须是 openai / env:变量名 / none" ;;
+    esac
+
+    local tmp
+    tmp="$(mktemp)"
+    awk -F '\t' -v n="$name" '$1 != n' "$REGISTRY" > "$tmp"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$name" "$provider" "$url" "$model" "$auth" "-" "-" "false" >> "$tmp"
+    mv "$tmp" "$REGISTRY"
+
+    echo "已添加: $name"
+    echo "  provider: $provider"
+    echo "  url     : $url"
+    echo "  model   : $model"
+}
+
+cmd_list() {
+    local active
+    active="$(current_profile)"
+    ui_header "PROFILES"
+    printf '\n  %s%-3s %-12s %-10s %-16s %-18s %s%s\n' \
+        "$UI_DIM" "" "PROFILE" "TYPE" "PROVIDER" "MODEL" "BASE URL" "$UI_RESET"
+    ui_rule
+
+    local mark
+    mark=" "
+    [[ "$active" == "baibai" ]] && mark="●"
+    printf '  %s%-3s%s %-12s %-10s %-16s %-18s %s\n' "$UI_GREEN" "$mark" "$UI_RESET" \
+        "baibai" "builtin" "baibai" "gpt-5.6-sol" "https://api.sharesai.xyz/v1"
+
+    mark=" "
+    [[ "$active" == "nova" ]] && mark="●"
+    printf '  %s%-3s%s %-12s %-10s %-16s %-18s %s\n' "$UI_GREEN" "$mark" "$UI_RESET" \
+        "nova" "builtin" "OpenAI" "gpt-5.5" "https://ai.novacode.top"
+
+    mark=" "
+    [[ "$active" == "official" ]] && mark="●"
+    if [[ -s "$OFFICIAL_MODEL_FILE" ]]; then
+        printf '  %s%-3s%s %-12s %-10s %-16s %-18s %s\n' "$UI_GREEN" "$mark" "$UI_RESET" \
+            "official" "builtin" "openai" "$(cat "$OFFICIAL_MODEL_FILE")" "https://api.openai.com/v1"
+    else
+        printf '  %s%-3s%s %-12s %-10s %-16s %-18s %s\n' "$UI_GREEN" "$mark" "$UI_RESET" \
+            "official" "builtin" "openai" "<not set>" "https://api.openai.com/v1"
+    fi
+
+    while IFS=$'\t' read -r n p u m a r rv g; do
+        [[ -n "$n" ]] || continue
+        mark=" "
+        [[ "$active" == "$n" ]] && mark="●"
+        printf '  %s%-3s%s %-12s %-10s %-16s %-18s %s\n' "$UI_GREEN" "$mark" "$UI_RESET" \
+            "$n" "custom" "$p" "$m" "$u"
+    done < "$REGISTRY"
+
+    printf '\n'
+    ui_info "● 表示当前激活配置"
+}
+
+cmd_status() {
+    local name
+    name="$(current_profile)"
+    ui_header "STATUS"
+
+    ui_section "Codex"
+    ui_kv "CODEX_HOME" "$CODEX_DIR"
+    ui_kv "RELAY_HOME" "$RELAY_DIR"
+    ui_kv "config" "$CONFIG"
+    ui_kv "current" "$name"
+
+    if profile_exists "$name"; then
+        load_profile "$name"
+        ui_kv "provider" "$P_PROVIDER"
+        ui_kv "model" "$P_MODEL"
+        ui_kv "base_url" "$P_URL"
+    fi
+
+    ui_section "Shell proxy"
+    if env | grep -iE '^(http|https|all|no)_proxy='; then
+        :
+    else
+        ui_ok "没有检测到代理环境变量"
+    fi
+}
+
+cmd_show_config() {
+    [[ -f "$CONFIG" ]] || die "$CONFIG 不存在"
+    cat "$CONFIG"
+}
+
+# -----------------------------
+# 聊天历史
+# -----------------------------
+cmd_history() {
+    local limit="${1:-40}"
+    ui_header "CHAT HISTORY"
+    [[ "$limit" =~ ^[0-9]+$ ]] || die "数量必须是数字"
+    need sqlite3
+    [[ -f "$CODEX_DIR/state_5.sqlite" ]] || die "state_5.sqlite 不存在"
+
+    sqlite3 -header -column "$CODEX_DIR/state_5.sqlite" "
+SELECT
+    substr(id,1,18) AS id,
+    datetime(updated_at,'unixepoch','localtime') AS updated,
+    model_provider AS provider,
+    COALESCE(model,'') AS model,
+    substr(
+        COALESCE(
+            NULLIF(name,''),
+            NULLIF(title,''),
+            NULLIF(first_user_message,''),
+            '(untitled)'
+        ),1,58
+    ) AS title
+FROM threads
+ORDER BY updated_at DESC
+LIMIT $limit;
+"
+}
+
+cmd_search() {
+    [[ $# -ge 1 ]] || die "用法: cr search 关键词"
+    need python3
+
+    local q="$*"
+    python3 - "$CODEX_DIR/state_5.sqlite" "$q" <<'PY'
+import sqlite3,sys
+
+db,q=sys.argv[1],sys.argv[2]
+c=sqlite3.connect(db)
+rows=c.execute("""
+SELECT
+ id, model_provider, COALESCE(model,''),
+ COALESCE(NULLIF(name,''),NULLIF(title,''),NULLIF(first_user_message,''),'(untitled)'),
+ cwd
+FROM threads
+WHERE id LIKE ? OR name LIKE ? OR title LIKE ? OR first_user_message LIKE ?
+ORDER BY updated_at DESC
+LIMIT 100
+""",(f"%{q}%",)*4).fetchall()
+c.close()
+
+if not rows:
+    print("没有找到匹配聊天")
+
+for row in rows:
+    print()
+    print("ID      :",row[0])
+    print("PROVIDER:",row[1])
+    print("MODEL   :",row[2])
+    print("TITLE   :",row[3][:180].replace("\n"," "))
+    print("CWD     :",row[4])
+PY
+}
+
+find_thread_info() {
+    local target="$1"
+
+    python3 - "$CODEX_DIR" "$target" <<'PY'
+from pathlib import Path
+import sqlite3,json,sys
+
+home=Path(sys.argv[1])
+target=sys.argv[2]
+found=[]
+
+db=home/"state_5.sqlite"
+if db.exists():
+    c=sqlite3.connect(db)
+    found=c.execute("""
+        SELECT id,model_provider,COALESCE(model,''),
+               COALESCE(NULLIF(name,''),NULLIF(title,''),NULLIF(first_user_message,''),'(untitled)')
+        FROM threads
+        WHERE id=? OR id LIKE ?
+        ORDER BY updated_at DESC
+    """,(target,target+"%")).fetchall()
+    c.close()
+
+if len(found)==1:
+    row=found[0]
+    print("\t".join(str(x).replace("\t"," ").replace("\n"," ") for x in row))
+    raise SystemExit(0)
+if len(found)>1:
+    print("匹配多个 thread，请使用更完整 ID:",file=sys.stderr)
+    for r in found[:20]:
+        print(r[0],r[1],r[3][:80],file=sys.stderr)
+    raise SystemExit(2)
+
+rollouts={}
+for dirname in ("sessions", "archived_sessions"):
+    root=home/dirname
+    if not root.exists():
+        continue
+    for path in root.rglob("rollout-*.jsonl"):
+        try:
+            with path.open("r",encoding="utf-8",errors="replace") as f:
+                for line in f:
+                    try:
+                        obj=json.loads(line)
+                    except Exception:
+                        continue
+                    if obj.get("type") != "session_meta":
+                        continue
+                    p=obj.get("payload",{})
+                    sid=p.get("id","")
+                    if sid == target or sid.startswith(target):
+                        rollouts[sid]=(p.get("model_provider",""),p.get("model",""),"(from rollout)")
+                    break
+        except Exception:
+            pass
+
+if len(rollouts)==1:
+    sid=next(iter(rollouts))
+    p,m,t=rollouts[sid]
+    print(f"{sid}\t{p}\t{m}\t{t}")
+    raise SystemExit(0)
+if len(rollouts)>1:
+    print("rollout 中匹配多个 ID，请使用更完整 ID:",file=sys.stderr)
+    for sid in rollouts:
+        print(sid,file=sys.stderr)
+    raise SystemExit(2)
+
+print("没有找到该 thread",file=sys.stderr)
+raise SystemExit(1)
+PY
+}
+
+profile_for_old_provider() {
+    local provider="$1"
+    case "$provider" in
+        baibai) echo "baibai" ;;
+        OpenAI) echo "nova" ;;
+        openai) echo "official" ;;
+        *)
+            local hit
+            hit="$(awk -F '\t' -v p="$provider" '$2==p {print $1; exit}' "$REGISTRY")"
+            [[ -n "$hit" ]] && echo "$hit" || echo "$(current_profile)"
+            ;;    esac
+}
+
+cmd_resume() {
+    [[ $# -ge 1 && $# -le 2 ]] || die "用法: cr resume THREAD_ID [PROFILE]"
+
+    local target="$1" forced="${2:-}" info tid old_provider old_model title profile
+    info="$(find_thread_info "$target")" || exit $?
+    IFS=$'\t' read -r tid old_provider old_model title <<< "$info"
+
+    if [[ -n "$forced" ]]; then
+        profile="$forced"
+    else
+        profile="$(profile_for_old_provider "$old_provider")"
+    fi
+
+    if [[ "$profile" == "official" && ! -s "$OFFICIAL_MODEL_FILE" ]]; then
+        die "该聊天属于官方 openai，但 official 尚未设置模型。先运行: cr official MODEL"
+    fi
+
+    echo "恢复聊天:"
+    echo "  ID          : $tid"
+    echo "  old provider: $old_provider"
+    echo "  old model   : $old_model"
+    echo "  title       : $title"
+    echo "  use profile : $profile"
+
+    write_config_for_profile "$profile"
+    cmd_run resume "$tid"
+}
+
+cmd_resume_all() {
+    local profile="${1:-$(current_profile)}"
+    write_config_for_profile "$profile"
+    cmd_run resume --all --include-non-interactive
+}
+
+cmd_recover_menu() {
+    need sqlite3
+    need python3
+
+    local tmp
+    tmp="$(mktemp)"
+
+    sqlite3 -separator $'\t' "$CODEX_DIR/state_5.sqlite" "
+SELECT
+    id,
+    model_provider,
+    substr(COALESCE(NULLIF(name,''),NULLIF(title,''),NULLIF(first_user_message,''),'(untitled)'),1,70)
+FROM threads
+ORDER BY updated_at DESC
+LIMIT 50;
+" > "$tmp"
+
+    echo "=== 最近聊天 ==="
+    nl -w2 -s') ' "$tmp"
+    echo
+    read -r -p "选择编号（0取消）: " n
+
+    [[ "$n" == "0" ]] && { rm -f "$tmp"; return; }
+    [[ "$n" =~ ^[0-9]+$ ]] || { rm -f "$tmp"; die "编号非法"; }
+
+    local line tid provider title
+    line="$(sed -n "${n}p" "$tmp")"
+    rm -f "$tmp"
+    [[ -n "$line" ]] || die "没有这个编号"
+
+    IFS=$'\t' read -r tid provider title <<< "$line"
+
+    echo
+    echo "选择恢复方式:"
+    echo "1) 原始 provider（推荐）"
+    echo "2) baibai"
+    echo "3) nova"
+    echo "4) official"
+    echo "5) 当前 profile ($(current_profile))"
+    read -r -p "请选择 [1]: " choice
+    choice="${choice:-1}"
+
+    case "$choice" in
+        1) cmd_resume "$tid" ;;
+        2) cmd_resume "$tid" baibai ;;
+        3) cmd_resume "$tid" nova ;;
+        4) cmd_resume "$tid" official ;;
+        5) cmd_resume "$tid" "$(current_profile)" ;;
+        *) die "选择非法" ;;
+    esac
+}
+
+cmd_health() {
+    ui_header "HISTORY HEALTH"
+    need python3
+
+    python3 - "$CODEX_DIR" <<'PY'
+from pathlib import Path
+import sqlite3,json,sys,collections
+
+home=Path(sys.argv[1])
+
+db_ids=set()
+providers=collections.Counter()
+db=home/"state_5.sqlite"
+if db.exists():
+    c=sqlite3.connect(db)
+    for sid,p in c.execute("SELECT id,model_provider FROM threads"):
+        db_ids.add(sid)
+        providers[p]+=1
+    c.close()
+
+index_ids=set()
+idx=home/"session_index.jsonl"
+if idx.exists():
+    for line in idx.open("r",encoding="utf-8",errors="replace"):
+        try:
+            obj=json.loads(line)
+            sid=obj.get("id")
+            if sid:
+                index_ids.add(sid)
+        except Exception:
+            pass
+
+rollout_files=0
+session_ids=set()
+for dirname in ("sessions", "archived_sessions"):
+    root=home/dirname
+    if not root.exists():
+        continue
+    for path in root.rglob("rollout-*.jsonl"):
+        rollout_files += 1
+        try:
+            with path.open("r",encoding="utf-8",errors="replace") as f:
+                for line in f:
+                    try:
+                        obj=json.loads(line)
+                    except Exception:
+                        continue
+                    if obj.get("type")=="session_meta":
+                        sid=obj.get("payload",{}).get("id")
+                        if sid:
+                            session_ids.add(sid)
+                        break
+        except Exception:
+            pass
+
+print("=== Codex history health ===")
+print("rollout files       :",rollout_files)
+print("unique session IDs  :",len(session_ids))
+print("SQLite threads      :",len(db_ids))
+print("session index IDs   :",len(index_ids))
+print("session - SQLite    :",len(session_ids-db_ids))
+print("SQLite - sessions   :",len(db_ids-session_ids))
+print("SQLite - index      :",len(db_ids-index_ids))
+print("index - SQLite      :",len(index_ids-db_ids))
+
+if providers:
+    print("\n=== Provider distribution ===")
+    for p,n in providers.most_common():
+        print(f"{p or '<empty>':20} {n}")
+
+print()
+if session_ids == db_ids == index_ids:
+    print("STATUS: HEALTHY")
+elif session_ids == db_ids and db_ids != index_ids:
+    print("STATUS: INDEX OUT OF SYNC")
+    print("可以运行: cr reindex")
+elif session_ids-db_ids:
+    print("STATUS: ROLLOUT EXISTS BUT SQLITE MISSING THREADS")
+    print("仍可尝试: cr resume THREAD_ID PROFILE")
+else:
+    print("STATUS: CHECK REQUIRED")
+PY
+}
+
+cmd_backup() {
+    ui_header "HISTORY BACKUP"
+    need python3
+
+    local stamp dest
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    dest="$RELAY_DIR/backups/history/$stamp"
+    mkdir -p "$dest"
+
+    python3 - "$CODEX_DIR" "$dest" <<'PY'
+from pathlib import Path
+import sqlite3,shutil,sys,tarfile
+
+home=Path(sys.argv[1])
+dest=Path(sys.argv[2])
+
+for name in ("state_5.sqlite","thread_history_1.sqlite"):
+    src=home/name
+    if src.exists():
+        s=sqlite3.connect(src)
+        d=sqlite3.connect(dest/name)
+        s.backup(d)
+        d.close(); s.close()
+
+for name in ("session_index.jsonl","history.jsonl"):
+    src=home/name
+    if src.exists():
+        shutil.copy2(src,dest/name)
+
+for dirname in ("sessions", "archived_sessions"):
+    srcdir=home/dirname
+    if srcdir.exists():
+        with tarfile.open(dest/f"{dirname}.tar.gz","w:gz") as tar:
+            tar.add(srcdir,arcname=dirname)
+
+print("backup:",dest)
+PY
+}
+
+cmd_reindex() {
+    ui_header "REINDEX"
+    need python3
+    [[ -f "$CODEX_DIR/state_5.sqlite" ]] || die "state_5.sqlite 不存在"
+
+    cmd_backup
+
+    python3 - "$CODEX_DIR" <<'PY'
+from pathlib import Path
+from datetime import datetime,timezone
+import sqlite3,json,sys,time,shutil
+
+home=Path(sys.argv[1])
+db=home/"state_5.sqlite"
+idx=home/"session_index.jsonl"
+
+if idx.exists():
+    shutil.copy2(idx,home/f"session_index.jsonl.backup-{time.strftime('%Y%m%d-%H%M%S')}")
+
+c=sqlite3.connect(db)
+rows=c.execute("""
+SELECT
+    id,
+    COALESCE(NULLIF(name,''),NULLIF(title,''),NULLIF(first_user_message,''),NULLIF(preview,''),id),
+    updated_at,
+    updated_at_ms
+FROM threads
+ORDER BY COALESCE(updated_at_ms,updated_at*1000)
+""").fetchall()
+c.close()
+
+tmp=home/"session_index.jsonl.rebuild"
+with tmp.open("w",encoding="utf-8") as f:
+    for sid,name,updated,updated_ms in rows:
+        name=str(name).replace("\n"," ").strip()
+        if len(name)>300:
+            name=name[:297]+"..."
+        ts=(updated_ms/1000) if updated_ms else updated
+        dt=datetime.fromtimestamp(ts,timezone.utc).isoformat().replace("+00:00","Z")
+        f.write(json.dumps({"id":sid,"thread_name":name,"updated_at":dt},ensure_ascii=False)+"\n")
+
+tmp.replace(idx)
+print("Rebuilt session index:",len(rows))
+PY
+
+    cmd_health
+}
+
+# -----------------------------
+# 一键恢复聊天历史
+# -----------------------------
+cmd_repair_history() {
+    ui_header "ONE-CLICK RECOVERY"
+    need python3
+
+    [[ -f "$CODEX_DIR/state_5.sqlite" ]] || die "state_5.sqlite 不存在"
+
+    if pgrep -u "$(id -u)" -af '(^|/)(codex|codex-cli)([[:space:]]|$)' >/dev/null 2>&1; then
+        echo "检测到当前用户仍有 Codex 进程运行。"
+        echo "请先完全退出 Codex，再运行: cr repair-history"
+        return 1
+    fi
+
+    echo "=== Codex 一键聊天恢复 ==="
+    echo "CODEX_HOME: $CODEX_DIR"
+    echo
+    echo "[1/4] 备份当前聊天数据库、索引和 rollout..."
+    cmd_backup
+
+    echo
+    echo "[2/4] 检查并修复 SQLite thread 元数据..."
+
+    python3 - "$CODEX_DIR" <<'REPAIRPY'
+from pathlib import Path
+from datetime import datetime, timezone
+import json
+import sqlite3
+import sys
+import time
+
+home = Path(sys.argv[1]).expanduser().resolve()
+db = home / "state_5.sqlite"
+idx = home / "session_index.jsonl"
+
+
+def jtext(v):
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return v
+    return json.dumps(v, ensure_ascii=False, separators=(",", ":"))
+
+
+def parse_ts(v):
+    if not v:
+        return None
+    if isinstance(v, (int, float)):
+        x = float(v)
+        if x > 10_000_000_000:
+            x /= 1000.0
+        return x
+    if isinstance(v, str):
+        z = v.strip()
+        if not z:
+            return None
+        try:
+            x = float(z)
+            if x > 10_000_000_000:
+                x /= 1000.0
+            return x
+        except Exception:
+            pass
+        try:
+            return datetime.fromisoformat(z.replace("Z", "+00:00")).timestamp()
+        except Exception:
+            return None
+    return None
+
+
+def first_text_from_content(content):
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts = []
+    for item in content:
+        if isinstance(item, str):
+            parts.append(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+        for k in ("text", "input_text", "output_text"):
+            val = item.get(k)
+            if isinstance(val, str) and val.strip():
+                parts.append(val)
+                break
+    return " ".join(parts)
+
+
+def scan_rollout(path: Path, archived: bool):
+    meta = None
+    first_user = ""
+    latest_ts = None
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+
+                payload = obj.get("payload")
+                for candidate in (
+                    obj.get("timestamp"),
+                    payload.get("timestamp") if isinstance(payload, dict) else None,
+                ):
+                    ts = parse_ts(candidate)
+                    if ts is not None and (latest_ts is None or ts > latest_ts):
+                        latest_ts = ts
+
+                typ = obj.get("type")
+                if typ == "session_meta" and isinstance(payload, dict) and meta is None:
+                    meta = payload
+
+                if not first_user and typ == "response_item" and isinstance(payload, dict):
+                    if payload.get("role") == "user":
+                        text = first_text_from_content(payload.get("content"))
+                        if text.strip():
+                            first_user = " ".join(text.split())
+
+                if not first_user and typ == "event_msg" and isinstance(payload, dict):
+                    if payload.get("role") == "user" or payload.get("type") in ("user_message", "user_msg"):
+                        text = payload.get("message") or payload.get("text") or first_text_from_content(payload.get("content"))
+                        if isinstance(text, str) and text.strip():
+                            first_user = " ".join(text.split())
+    except Exception as exc:
+        return None, f"{path}: {exc}"
+
+    if not meta or not meta.get("id"):
+        return None, None
+
+    stat = path.stat()
+    created = parse_ts(meta.get("timestamp")) or stat.st_mtime
+    updated = latest_ts or stat.st_mtime or created
+    if updated < created:
+        updated = created
+
+    sid = str(meta.get("id"))
+    title = first_user[:300] if first_user else f"Restored session {sid[:13]}"
+
+    return {
+        "id": sid,
+        "rollout_path": str(path.resolve()),
+        "created_at": int(created),
+        "updated_at": int(updated),
+        "source": jtext(meta.get("source") or "cli"),
+        "model_provider": str(meta.get("model_provider") or ""),
+        "cwd": str(meta.get("cwd") or str(home)),
+        "title": title,
+        "sandbox_policy": jtext(meta.get("sandbox_policy") or ""),
+        "approval_mode": jtext(meta.get("approval_mode") or ""),
+        "tokens_used": 0,
+        "has_user_event": 1 if first_user else 0,
+        "archived": 1 if archived else 0,
+        "archived_at": int(updated) if archived else None,
+        "cli_version": str(meta.get("cli_version") or ""),
+        "first_user_message": first_user[:4000],
+        "memory_mode": str(meta.get("memory_mode") or "enabled"),
+        "model": str(meta.get("model") or ""),
+        "reasoning_effort": str(meta.get("reasoning_effort") or meta.get("model_reasoning_effort") or ""),
+        "created_at_ms": int(created * 1000),
+        "updated_at_ms": int(updated * 1000),
+        "thread_source": str(meta.get("thread_source") or ("user" if first_user else "")),
+        "preview": first_user[:1000],
+        "recency_at": int(updated),
+        "recency_at_ms": int(updated * 1000),
+        "history_mode": str(meta.get("history_mode") or "legacy"),
+        "name": None,
+        "is_pinned": 0,
+        "originator": jtext(meta.get("originator")) or None,
+    }, None
+
+
+records = {}
+errors = []
+rollout_files = 0
+
+for dirname, archived in (("sessions", False), ("archived_sessions", True)):
+    root = home / dirname
+    if not root.exists():
+        continue
+    for path in root.rglob("rollout-*.jsonl"):
+        rollout_files += 1
+        rec, err = scan_rollout(path, archived)
+        if err:
+            errors.append(err)
+        if not rec:
+            continue
+        sid = rec["id"]
+        old = records.get(sid)
+        rank = (0 if rec["archived"] else 1, rec["updated_at"])
+        old_rank = (-1, -1) if old is None else (0 if old["archived"] else 1, old["updated_at"])
+        if old is None or rank > old_rank:
+            records[sid] = rec
+
+conn = sqlite3.connect(db)
+conn.row_factory = sqlite3.Row
+
+integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
+if integrity != "ok":
+    conn.close()
+    print("ABORT: SQLite integrity_check != ok")
+    print("Result:", integrity)
+    print("备份已经完成，但没有写入数据库。")
+    raise SystemExit(2)
+
+schema_rows = conn.execute("PRAGMA table_info(threads)").fetchall()
+if not schema_rows:
+    conn.close()
+    raise SystemExit("threads 表不存在")
+
+schema = {
+    r[1]: {
+        "type": (r[2] or "").upper(),
+        "notnull": bool(r[3]),
+        "default": r[4],
+        "pk": bool(r[5]),
+    }
+    for r in schema_rows
+}
+columns = set(schema)
+existing = {r["id"]: r for r in conn.execute("SELECT * FROM threads")}
+
+inserted = 0
+path_fixed = 0
+provider_fixed = 0
+metadata_fixed = 0
+archived_fixed = 0
+
+
+def path_exists(value):
+    if not value:
+        return False
+    try:
+        p = Path(str(value)).expanduser()
+        if not p.is_absolute():
+            p = home / p
+        return p.exists()
+    except Exception:
+        return False
+
+
+def fallback_for_required(info):
+    t = info["type"]
+    if any(x in t for x in ("INT", "REAL", "NUM", "BOOL")):
+        return 0
+    return ""
+
+with conn:
+    for sid, rec in records.items():
+        row = existing.get(sid)
+        if row is None:
+            vals = {col: value for col, value in rec.items() if col in columns}
+            for col, info in schema.items():
+                if col in vals or info["pk"]:
+                    continue
+                if info["notnull"] and info["default"] is None:
+                    vals[col] = fallback_for_required(info)
+
+            names = list(vals)
+            placeholders = ",".join("?" for _ in names)
+            sql = f"INSERT INTO threads ({','.join(names)}) VALUES ({placeholders})"
+            conn.execute(sql, [vals[n] for n in names])
+            inserted += 1
+            continue
+
+        updates = {}
+
+        if "rollout_path" in columns and not path_exists(row["rollout_path"]):
+            updates["rollout_path"] = rec["rollout_path"]
+            path_fixed += 1
+            if "archived" in columns and int(row["archived"] or 0) != int(rec["archived"]):
+                updates["archived"] = rec["archived"]
+                archived_fixed += 1
+                if "archived_at" in columns:
+                    updates["archived_at"] = rec["archived_at"]
+
+        for col in (
+            "model_provider", "cwd", "source", "cli_version", "model",
+            "reasoning_effort", "first_user_message", "title", "preview",
+            "thread_source", "originator"
+        ):
+            if col not in columns:
+                continue
+            current = row[col]
+            candidate = rec.get(col)
+            if (current is None or str(current).strip() == "") and candidate not in (None, ""):
+                updates[col] = candidate
+                if col == "model_provider":
+                    provider_fixed += 1
+                else:
+                    metadata_fixed += 1
+
+        for col in ("created_at", "updated_at", "created_at_ms", "updated_at_ms", "recency_at", "recency_at_ms"):
+            if col not in columns:
+                continue
+            current = row[col]
+            candidate = rec.get(col)
+            if (current is None or current == 0) and candidate not in (None, 0):
+                updates[col] = candidate
+                metadata_fixed += 1
+
+        if updates:
+            set_sql = ",".join(f"{k}=?" for k in updates)
+            conn.execute(f"UPDATE threads SET {set_sql} WHERE id=?", [*updates.values(), sid])
+
+integrity_after = conn.execute("PRAGMA integrity_check").fetchone()[0]
+if integrity_after != "ok":
+    conn.close()
+    raise SystemExit(f"修复后 SQLite integrity_check 失败: {integrity_after}")
+
+name_cols = [c for c in ("name", "title", "first_user_message", "preview") if c in columns]
+if name_cols:
+    title_expr = "COALESCE(" + ",".join(f"NULLIF({c},'')" for c in name_cols) + ",id)"
+else:
+    title_expr = "id"
+
+updated_expr = "updated_at_ms" if "updated_at_ms" in columns else "updated_at*1000"
+rows = conn.execute(
+    f"SELECT id,{title_expr} AS display_name,{updated_expr} AS updated_ms "
+    f"FROM threads ORDER BY {updated_expr}"
+).fetchall()
+
+index_tmp = home / "session_index.jsonl.repair"
+with index_tmp.open("w", encoding="utf-8") as f:
+    for r in rows:
+        name = str(r["display_name"] or r["id"]).replace("\n", " ").strip()
+        if len(name) > 300:
+            name = name[:297] + "..."
+        ms = r["updated_ms"] or int(time.time() * 1000)
+        if ms < 10_000_000_000:
+            ms *= 1000
+        dt = datetime.fromtimestamp(ms / 1000.0, timezone.utc).isoformat().replace("+00:00", "Z")
+        f.write(json.dumps({
+            "id": r["id"],
+            "thread_name": name,
+            "updated_at": dt,
+        }, ensure_ascii=False) + "\n")
+
+index_tmp.replace(idx)
+index_count = len(rows)
+conn.close()
+
+print("rollout files scanned :", rollout_files)
+print("unique session IDs    :", len(records))
+print("SQLite rows inserted  :", inserted)
+print("rollout paths fixed   :", path_fixed)
+print("providers filled      :", provider_fixed)
+print("metadata fields filled:", metadata_fixed)
+print("archive flags fixed   :", archived_fixed)
+print("index entries rebuilt :", index_count)
+print("SQLite integrity      :", integrity_after)
+if errors:
+    print("rollout read warnings :", len(errors))
+    for e in errors[:10]:
+        print("  WARN:", e)
+REPAIRPY
+
+    echo
+    echo "[3/4] 重新检查聊天库一致性..."
+    cmd_health
+
+    echo
+    echo "[4/4] 完成"
+    echo "建议现在运行:"
+    echo "  cr resume-all"
+    echo
+    echo "如果某条聊天仍未显示，可用:"
+    echo "  cr history 200"
+    echo "  cr resume THREAD_ID"
+}
+
+# -----------------------------
+# 菜单
+# -----------------------------
+cmd_menu() {
+    while true; do
+        clear || true
+        ui_header "CONTROL CENTER"
+        ui_profile_card
+
+        ui_section "PROVIDERS"
+        ui_menu_item "1" "Launch baibai" "gpt-5.6-sol · xhigh"
+        ui_menu_item "2" "Launch nova" "gpt-5.5"
+        ui_menu_item "3" "Launch official OpenAI" "official provider"
+
+        ui_section "CHAT / HISTORY"
+        ui_menu_item "4" "Recent chats" "latest 50 threads"
+        ui_menu_item "5" "Recover a chat" "choose provider / thread"
+        ui_menu_item "6" "Resume all" "all cwd / sessions"
+        ui_menu_item "13" "One-click history recovery" "backup → repair → reindex"
+
+        ui_section "NETWORK"
+        ui_menu_item "7" "Network diagnostics" "DNS · TCP DNS · HTTPS"
+        ui_menu_item "8" "Configure direct access" "no VPN · validated hosts"
+
+        ui_section "SYSTEM"
+        ui_menu_item "9" "History health" "sessions · SQLite · index"
+        ui_menu_item "10" "Backup history" "safe snapshot"
+        ui_menu_item "11" "Profiles" "providers / endpoints"
+        ui_menu_item "12" "Show config.toml" "effective config"
+        ui_menu_item "0" "Exit" ""
+
+        printf '\n%s›%s %sChoose an action%s  ' "$UI_PINK" "$UI_RESET" "$UI_BOLD" "$UI_RESET"
+        read -r choice
+
+        case "$choice" in
+            1)
+                write_config_for_profile baibai
+                cmd_run
+                ;;
+            2)
+                write_config_for_profile nova
+                cmd_run
+                ;;
+            3)
+                if [[ ! -s "$OFFICIAL_MODEL_FILE" ]]; then
+                    printf '%s›%s Official model: ' "$UI_PINK" "$UI_RESET"
+                    read -r m
+                    [[ -n "$m" ]] || { ui_warn "模型不能为空"; ui_pause; continue; }
+                    cmd_official "$m"
+                fi
+                write_config_for_profile official
+                cmd_run
+                ;;
+            4)
+                clear || true
+                cmd_history 50
+                ui_pause
+                ;;
+            5)
+                cmd_recover_menu
+                ;;
+            6)
+                cmd_resume_all
+                ;;
+            7)
+                clear || true
+                cmd_check "$(current_profile)" || true
+                ui_pause
+                ;;
+            8)
+                clear || true
+                cmd_direct "$(current_profile)" || true
+                ui_pause
+                ;;
+            9)
+                clear || true
+                cmd_health
+                ui_pause
+                ;;
+            10)
+                clear || true
+                cmd_backup
+                ui_pause
+                ;;
+            11)
+                clear || true
+                cmd_list
+                ui_pause
+                ;;
+            12)
+                clear || true
+                ui_header "CONFIG.TOML"
+                cmd_show_config
+                ui_pause
+                ;;
+            13)
+                clear || true
+                cmd_repair_history || true
+                ui_pause
+                ;;
+            0|q|Q)
+                printf '\n%sGoodbye.%s\n' "$UI_DIM" "$UI_RESET"
+                return
+                ;;
+            *)
+                ui_warn "无效选择: $choice"
+                sleep 0.7
+                ;;
+        esac
+    done
+}
+
+usage() {
+    ui_header "CLI REFERENCE"
+    cat <<EOF
+
+${UI_BOLD}Quick start${UI_RESET}
+  cr menu                     打开控制中心
+  cr use nova                 切换 config.toml → Nova
+  cr use baibai               切换 config.toml → baibai
+  cx                          清代理后启动 Codex
+
+${UI_BOLD}Profiles${UI_RESET}
+  cr list
+  cr status
+  cr use NAME
+  cr official MODEL
+  cr add NAME BASE_URL MODEL [PROVIDER_ID] [AUTH]
+  cr show-config
+
+${UI_BOLD}Network${UI_RESET}
+  cr check [PROFILE]          DNS / TCP DNS / HTTPS 诊断
+  cr direct [PROFILE]         配置无 VPN 直连
+  cr setup PROFILE            use + direct
+
+${UI_BOLD}History${UI_RESET}
+  cr history [N]
+  cr search 关键词
+  cr recover-menu
+  cr resume THREAD_ID [PROFILE]
+  cr resume-all [PROFILE]
+  cr health
+  cr backup
+  cr reindex
+  cr repair-history           一键备份 + 修 SQLite/路径/provider + 重建索引
+
+${UI_DIM}Built-ins:${UI_RESET}
+  baibai   gpt-5.6-sol / xhigh / https://api.sharesai.xyz/v1
+  nova     gpt-5.5 / https://ai.novacode.top
+
+${UI_DIM}Tip:${UI_RESET} 设置 NO_COLOR=1 可关闭彩色界面。
+EOF
+}
+
+case "${1:-}" in
+    menu)
+        shift; cmd_menu "$@" ;;
+    list)
+        shift; cmd_list "$@" ;;
+    status)
+        shift; cmd_status "$@" ;;
+    use)
+        shift; cmd_use "$@" ;;
+    official)
+        shift; cmd_official "$@" ;;
+    add)
+        shift; cmd_add "$@" ;;
+    show-config)
+        shift; cmd_show_config "$@" ;;
+    check)
+        shift; cmd_check "$@" ;;
+    direct)
+        shift; cmd_direct "$@" ;;
+    setup)
+        shift; cmd_setup "$@" ;;
+    run)
+        shift; cmd_run "$@" ;;
+    history)
+        shift; cmd_history "$@" ;;
+    search|history-search)
+        shift; cmd_search "$@" ;;
+    recover-menu)
+        shift; cmd_recover_menu "$@" ;;
+    resume|recover)
+        shift; cmd_resume "$@" ;;
+    resume-all)
+        shift; cmd_resume_all "$@" ;;
+    health|history-check)
+        shift; cmd_health "$@" ;;
+    backup|history-backup)
+        shift; cmd_backup "$@" ;;
+    reindex|history-reindex)
+        shift; cmd_reindex "$@" ;;
+    repair-history|repair)
+        shift; cmd_repair_history "$@" ;;
+    help|-h|--help|"")
+        usage ;;
+    *)
+        die "未知命令: $1（运行 cr help 查看帮助）" ;;
+esac\t' read -r old new; do
+        [[ -n "$old" && -n "$new" ]] || continue
+        if [[ ! -e "$new" && -f "$old" ]]; then
+            mv "$old" "$new"
+        fi
+    done <<EOF_RELAY_MIGRATE
+$CODEX_DIR/.relay-current	$CURRENT
+$CODEX_DIR/relays.tsv	$REGISTRY
+$CODEX_DIR/.official-model	$OFFICIAL_MODEL_FILE
+$CODEX_DIR/.relay-language	$LANGUAGE_FILE
+EOF_RELAY_MIGRATE
+}
+migrate_legacy_relay_state
+
 touch "$REGISTRY"
 
 # -----------------------------
@@ -267,7 +2111,7 @@ write_config_for_profile() {
     stamp="$(date +%Y%m%d-%H%M%S)"
 
     if [[ -f "$CONFIG" ]]; then
-        backup="$CODEX_DIR/config-backups/config.toml.$stamp"
+        backup="$RELAY_DIR/backups/config/config.toml.$stamp"
         cp -a "$CONFIG" "$backup"
     fi
 
@@ -1176,7 +3020,7 @@ cmd_backup() {
 
     local stamp dest
     stamp="$(date +%Y%m%d-%H%M%S)"
-    dest="$CODEX_DIR/history-backups/$stamp"
+    dest="$RELAY_DIR/backups/history/$stamp"
     mkdir -p "$dest"
 
     python3 - "$CODEX_DIR" "$dest" <<'PY'
