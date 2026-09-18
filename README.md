@@ -260,6 +260,62 @@ ALL_PROXY
 
 因此 Codex 不会因为当前 shell 残留 `127.0.0.1:7897` 而依赖 VPN。
 
+## 语言设置
+
+Codex-Relay **默认使用中文界面**。
+
+第一次运行时，如果还没有语言配置文件，会自动使用：
+
+```text
+zh
+```
+
+语言设置保存在当前用户自己的：
+
+```text
+~/.codex-relay/language
+```
+
+查看当前语言：
+
+```bash
+cr language
+```
+
+切换到中文：
+
+```bash
+cr language zh
+```
+
+切换到英文：
+
+```bash
+cr language en
+```
+
+也可以在：
+
+```bash
+cr menu
+```
+
+中选择 **语言设置**。
+
+语言设置是**每个用户独立**的，因此同一台服务器可以：
+
+```text
+userA → 中文
+userB → English
+userC → 中文
+```
+
+而所有人仍然共用同一个：
+
+```text
+/usr/local/bin/codex-relay
+```
+
 ## Provider 管理
 
 ```bash
@@ -443,6 +499,9 @@ cr repair-history
 
 ```bash
 cr menu
+cr language
+cr language zh
+cr language en
 
 cr use nova
 cr use baibai
