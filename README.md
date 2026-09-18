@@ -81,6 +81,7 @@ Nova 默认**不会**写入不存在的 `model_catalog_json`，避免 Codex 启�
 ~/.codex-relay/language
 ~/.codex-relay/secrets/      # 当前用户保存的各中转站 API Key
 ~/.codex-relay/auth/          # 官方 Codex 登录快照 / daemon 刷新状态
+~/.codex-relay/cache/         # Dashboard 的网络 / 额度短缓存
 ~/.codex-relay/overrides/    # 当前用户自己的模型 / endpoint 覆盖
 ~/.codex-relay/backups/      # config.toml / auth.json / history 备份
 ```
@@ -237,10 +238,37 @@ cr
 
 会进入 **中转站管理器**。这里可以查看当前中转站、模型、Key 状态，并进行切换、编辑、测速、添加和删除。
 
-完整控制中心仍然可以使用：
+完整控制中心使用：
 
 ```bash
 cr menu
+```
+
+新版 `cr menu` 是 Dashboard，而不是 17 项长菜单。首页会显示：
+
+```text
+当前中转站
+模型 / endpoint
+API Key 状态
+无代理直连状态与延迟
+Codex CLI 版本
+后台 daemon 版本（版本不一致会警告）
+当前用户 Codex 进程数
+Shell proxy 状态
+官方 Codex 额度
+```
+
+下面只保留四个一级入口：
+
+```text
+[1] 中转站
+[2] 聊天历史
+[3] 网络与服务
+[4] 设置
+
+[Enter] 启动当前 Codex
+[R] 刷新状态
+[Q] 退出
 ```
 
 切到 Nova：
@@ -363,6 +391,44 @@ cr switch baibai
 
 > 已经运行中的 Codex 会话不会热切换 provider。API Key 或中转站发生变化后，应启动新的 Codex 会话；Relay 会负责当前用户的必要服务刷新，不再需要手动粘贴 API Key。
 
+## 官方 Codex 额度
+
+如果当前用户保存过官方 ChatGPT / Codex 登录，`cr menu` 首页会显示该账号的 Codex 使用额度，例如：
+
+```text
+官方额度    5h 82% · 7d 64% · credits 10
+```
+
+查看详细额度和重置时间：
+
+```bash
+cr quota
+```
+
+强制刷新：
+
+```bash
+cr quota --refresh
+```
+
+额度缓存 60 秒，保存在：
+
+```text
+~/.codex-relay/cache/official-quota.json
+```
+
+缓存只保存套餐、剩余百分比、重置时间和 credits 等归一化信息，不保存 access token、account id 或 API Key。
+
+官方额度读取使用已经保存的官方 ChatGPT 登录；即使当前正在使用 Nova / baibai，只要之前保存过官方登录快照，Dashboard 仍可以显示官方 Codex 额度。
+
+对于 Nova / baibai / 自定义中转站，只有服务商存在明确且稳定的公开额度接口时才适合自动读取。当前没有可靠统一接口时，Dashboard 会显示：
+
+```text
+中转额度    N/A · 服务商未提供稳定公开接口
+```
+
+而不会猜测余额。
+
 ## 语言设置
 
 Codex-Relay **默认使用中文界面**。
@@ -439,7 +505,7 @@ cr providers
 cr menu
 ```
 
-中选择 **[16] 中转站管理**。
+中选择 **[1] 中转站**。
 
 列表会显示当前激活中转站、模型以及 API Key 是否已经配置。进入某个中转站后可以直接：
 
@@ -496,6 +562,7 @@ userC: Nova → 另一个兼容 endpoint
 ```bash
 cr list
 cr status
+cr quota
 cr services
 cr stop
 cr use NAME
