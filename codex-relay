@@ -1217,6 +1217,8 @@ cmd_add_interactive() {
     ui_header "$(L '添加中转站向导' 'ADD PROVIDER WIZARD')"
 
     ui_info "$(L '将创建当前用户可用的自定义中转站。不会修改其他 Linux 用户的配置。' 'This creates a custom provider for the current user only and does not change other Linux users.')"
+    ui_info "$(L '自定义中转站按 Codex Responses API 模式写入：wire_api = "responses"。服务商必须支持 OpenAI Responses API。' 'Custom providers use Codex Responses API mode: wire_api = "responses". The provider must support the OpenAI Responses API.')"
+    ui_info "$(L '如果服务商只支持 /chat/completions，而不支持 /responses，则不能直接使用这个向导。' 'If the provider only supports /chat/completions and not /responses, this wizard is not compatible with it.')"
     ui_info "$(L '整个向导不会自动联网；保存后可按 R 或运行 cr check PROFILE 测试网络。' 'The wizard does not make network requests automatically; test later with R or cr check PROFILE.')"
 
     while true; do
