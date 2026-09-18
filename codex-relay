@@ -1014,6 +1014,8 @@ cmd_key() {
             prompt_relay_key "$name"
             if [[ "$(current_profile)" == "$name" ]]; then
                 apply_auth_for_profile "$name"
+                ui_warn "$(L '当前正在使用这个中转站；API Key 已更新，将自动停止当前用户的 Codex 服务/进程，使新认证立即生效。' 'This provider is active; the API key changed, so current-user Codex services/processes will be stopped to apply the new auth immediately.')"
+                cmd_stop || true
             fi
             ;;
         remove|rm|delete)
@@ -1024,6 +1026,8 @@ cmd_key() {
                 rm -f "$AUTH_FILE"
                 AUTH_CHANGED=1
                 : > "$AUTH_RELOAD_FLAG"
+                ui_warn "$(L '当前正在使用这个中转站；API Key 已删除，将自动停止当前用户的 Codex 服务/进程。' 'This provider is active; its API key was removed, so current-user Codex services/processes will be stopped.')"
+                cmd_stop || true
             fi
             ui_ok "$(L "已删除 $name 的本地 API Key" "Removed local API key for $name")"
             ;;
@@ -2614,7 +2618,7 @@ ${UI_BOLD}Profiles${UI_RESET}
 
 ${UI_BOLD}API keys${UI_RESET}
   cr key                      Show key status
-  cr key set PROFILE          Save/update this user's key
+  cr key set PROFILE          Save/update key; auto-stop Codex if active
   cr key remove PROFILE       Remove saved key
   cr switch PROFILE           Switch config/auth + launch
 
@@ -2677,7 +2681,7 @@ ${UI_BOLD}中转站 / Profile${UI_RESET}
 
 ${UI_BOLD}API Key${UI_RESET}
   cr key                      查看各中转站 Key 状态
-  cr key set PROFILE          保存 / 更新当前用户的 Key
+  cr key set PROFILE          保存 / 更新 Key；若为当前 profile 自动停止 Codex
   cr key remove PROFILE       删除保存的 Key
   cr switch PROFILE           切换 config/auth + 启动
 
