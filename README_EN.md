@@ -238,11 +238,42 @@ Codex-Relay uses the current user's saved key and tries:
 <Base URL>/v1/models
 ```
 
-If a model list is returned, select one by number. If the provider does not expose a model-list endpoint, manual entry remains available:
+If a model list is returned, select one by number. After choosing a relay model, Codex-Relay opens a **Reasoning Effort** picker and saves the model + reasoning choice atomically:
+
+```text
+REASONING // BAIBAI
+
+◆ PENDING MODEL
+  model               gpt-5.6-sol
+  current reasoning   xhigh
+
+◆ REASONING EFFORT
+  [Enter] Auto          recommended · leave model_reasoning_effort unset
+  [K]     Keep current  xhigh
+  [N]     None
+  [1]     Minimal
+  [2]     Low
+  [3]     Medium
+  [4]     High
+  [5]     XHigh
+  [M]     Manual value
+  [0]     Cancel without changing model
+```
+
+Reasoning-effort support varies by model. **Auto** is the safe default for unknown or custom models: it removes the previous `model_reasoning_effort` instead of writing an `"auto"` string, allowing Codex/the model to use its own default behavior.
+
+If you cancel from the reasoning picker, neither the model nor reasoning setting is changed.
+
+If the provider does not expose a model-list endpoint, manual entry remains available. The CLI can also set both values:
 
 ```bash
-cr model PROFILE MODEL
+cr model PROFILE MODEL               # Auto: clear old reasoning
+cr model PROFILE MODEL high          # explicitly use high
+cr model PROFILE MODEL xhigh         # explicitly use xhigh
+cr model PROFILE MODEL keep          # preserve current reasoning
 ```
+
+The built-in baibai profile still starts with `gpt-5.6-sol + xhigh`; the new Auto behavior applies when the user actively changes the model.
 
 ### Add a custom provider
 
@@ -519,7 +550,7 @@ Nova intentionally keeps its Base URL without automatically appending `/v1`. Cod
 | `cr use NAME` | Switch config/auth only |
 | `cr switch NAME` | Switch and launch Codex |
 | `cx` | Launch Codex with the active profile |
-| `cr model PROFILE MODEL` | Set per-user default model |
+| `cr model PROFILE MODEL [REASONING\|auto\|keep]` | Set model; omitted third arg uses Auto instead of inheriting old reasoning |
 | `cr endpoint PROFILE URL` | Set per-user endpoint |
 | `cr speed [PROFILE]` | Direct HTTPS speed test |
 | `cr key` | Show key status |
