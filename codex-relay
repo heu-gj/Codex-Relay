@@ -614,6 +614,68 @@ profile_names() {
     awk -F '\t' 'NF && $1!="nova" && $1!="baibai" && $1!="official" && !seen[$1]++ {print $1}' "$REGISTRY"
 }
 
+cmd_model() {
+    [[ $# -eq 2 ]] || die "$(L '用法: cr model PROFILE MODEL' 'Usage: cr model PROFILE MODEL')"
+    local name="$1" new_model="$2" old_model old_review
+    profile_exists "$name" || die "$(L "没有这个 profile: $name" "Unknown profile: $name")"
+    if [[ "$name" == "official" ]]; then
+        printf '%s\n' "$new_model" > "$OFFICIAL_MODEL_FILE"
+    else
+        load_profile "$name"
+        old_model="$P_MODEL"
+        old_review="$P_REVIEW"
+        [[ -n "$old_review" && "$old_review" == "$old_model" ]] && old_review="$new_model"
+        save_profile_override "$name" "$P_URL" "$new_model" "$P_REASONING" "$old_review"
+    fi
+    [[ "$(current_profile)" == "$name" ]] && write_config_for_profile "$name"
+    ui_ok "$(L "$name 默认模型 → $new_model" "$name default model → $new_model")"
+}
+
+cmd_endpoint() {
+    [[ $# -eq 2 ]] || die "$(L '用法: cr endpoint PROFILE URL' 'Usage: cr endpoint PROFILE URL')"
+    local name="$1" url="$2"
+    profile_exists "$name" || die "$(L "没有这个 profile: $name" "Unknown profile: $name")"
+    [[ "$url" =~ ^https?:// ]] || die "$(L 'URL 必须以 http:// 或 https:// 开头' 'URL must start with http:// or https://')"
+    [[ "$name" != "official" ]] || die "$(L '官方 OpenAI 地址不可修改' 'Official OpenAI endpoint cannot be changed')"
+    load_profile "$name"
+    save_profile_override "$name" "$url" "$P_MODEL" "$P_REASONING" "$P_REVIEW"
+    [[ "$(current_profile)" == "$name" ]] && write_config_for_profile "$name"
+    ui_ok "$(L "$name API 地址已更新" "$name endpoint updated")"
+}
+
+cmd_speed() {
+    local name="${1:-$(current_profile)}" result code sec ms
+    load_profile "$name"
+    need curl
+    result="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u all_proxy -u ALL_PROXY \
+        curl --noproxy '*' -4 -sS -o /dev/null -w '%{http_code} %{time_total}' \
+        --connect-timeout 7 --max-time 15 "$P_URL" 2>/dev/null)" || {
+        ui_fail "$(L '连接失败' 'Connection failed')"
+        return 1
+    }
+    code="${result%% *}"
+    sec="${result#* }"
+    [[ "$code" != "000" ]] || { ui_fail "$(L '连接失败' 'Connection failed')"; return 1; }
+    ms="$(awk -v t="$sec" 'BEGIN{printf "%.0f",t*1000}')"
+    ui_ok "$(L "$name 可达 · HTTP $code · ${ms} ms" "$name reachable · HTTP $code · ${ms} ms")"
+}
+
+cmd_delete_profile() {
+    [[ $# -eq 1 ]] || die "$(L '用法: cr delete PROFILE' 'Usage: cr delete PROFILE')"
+    local name="$1" tmp
+    case "$name" in
+        nova|baibai|official) die "$(L '内置中转站不能删除' 'Built-in providers cannot be deleted')" ;;
+    esac
+    profile_exists "$name" || die "$(L "没有这个 profile: $name" "Unknown profile: $name")"
+    tmp="$(mktemp)"
+    awk -F '\t' -v n="$name" '$1 != n' "$REGISTRY" > "$tmp"
+    mv "$tmp" "$REGISTRY"
+    reset_profile_override "$name"
+    rm -f "$(key_file_for_profile "$name")"
+    [[ "$(current_profile)" == "$name" ]] && write_config_for_profile nova
+    ui_ok "$(L "已删除: $name" "Deleted: $name")"
+}
+
 # -----------------------------
 # 每用户 / 每 Profile API Key
 # -----------------------------
