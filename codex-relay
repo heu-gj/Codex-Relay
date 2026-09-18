@@ -17,8 +17,23 @@ mkdir -p "$CODEX_DIR" "$RELAY_DIR" "$RELAY_DIR/backups/config" "$RELAY_DIR/backu
 # 从旧版 ~/.codex 中迁移少量 relay 状态文件。只迁移管理器自己的文件，
 # 不触碰 auth.json、sessions、SQLite 或其他 Codex 数据。
 migrate_legacy_relay_state() {
-    local old new
-    while IFS=
+    if [[ ! -e "$CURRENT" && -f "$CODEX_DIR/.relay-current" ]]; then
+        mv "$CODEX_DIR/.relay-current" "$CURRENT"
+    fi
+    if [[ ! -e "$REGISTRY" && -f "$CODEX_DIR/relays.tsv" ]]; then
+        mv "$CODEX_DIR/relays.tsv" "$REGISTRY"
+    fi
+    if [[ ! -e "$OFFICIAL_MODEL_FILE" && -f "$CODEX_DIR/.official-model" ]]; then
+        mv "$CODEX_DIR/.official-model" "$OFFICIAL_MODEL_FILE"
+    fi
+    if [[ ! -e "$LANGUAGE_FILE" && -f "$CODEX_DIR/.relay-language" ]]; then
+        mv "$CODEX_DIR/.relay-language" "$LANGUAGE_FILE"
+    fi
+}
+migrate_legacy_relay_state
+
+touch "$REGISTRY"
+
 # -----------------------------
 # 基础工具
 # -----------------------------
