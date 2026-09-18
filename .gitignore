@@ -5,6 +5,10 @@
 *.token
 auth.json
 
+# Local Codex-Relay state / secrets
+.codex-relay/
+secrets/
+
 # Local Codex state
 .codex/
 config.toml
