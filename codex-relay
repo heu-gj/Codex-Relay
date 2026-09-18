@@ -1100,13 +1100,14 @@ PY
 
 official_quota_summary() {
     local cache="$CACHE_DIR/official-quota.json"
-    if ! cache_fresh "$cache" 60; then
-        refresh_official_quota_cache >/dev/null 2>&1 || true
-    fi
-    [[ -s "$cache" ]] || {
-        printf '%s' "N/A"
+    if [[ ! -s "$cache" ]]; then
+        if official_auth_source >/dev/null 2>&1; then
+            printf '%s' "$(L '未刷新 · 按 R' 'not refreshed · press R')"
+        else
+            printf '%s' "N/A"
+        fi
         return 0
-    }
+    fi
 
     python3 - "$cache" <<'PY'
 import json
@@ -2696,25 +2697,46 @@ dashboard_cli_version() {
 }
 
 dashboard_daemon_version() {
-    command -v codex >/dev/null 2>&1 || { printf '%s' "N/A"; return; }
-    local out
-    out="$(codex app-server daemon version 2>/dev/null || true)"
-    if [[ -z "$out" ]]; then
-        printf '%s' "$(L '未运行/未知' 'stopped/unknown')"
-        return
+    local file="$CACHE_DIR/daemon-version.txt"
+    if [[ -s "$file" ]]; then
+        cat "$file"
+    else
+        printf '%s' "$(L '未检测 · 按 R' 'not checked · press R')"
     fi
-    printf '%s\n' "$out" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || printf '%s' "?"
+}
+
+refresh_dashboard_daemon() {
+    local file="$CACHE_DIR/daemon-version.txt" out
+    if ! command -v codex >/dev/null 2>&1; then
+        printf '%s\n' "N/A" > "$file"
+        return 0
+    fi
+
+    out="$(timeout 2 codex app-server daemon version 2>/dev/null || true)"
+    if [[ -z "$out" ]]; then
+        printf '%s\n' "$(L '未运行/未知' 'stopped/unknown')" > "$file"
+        return 0
+    fi
+
+    printf '%s\n' "$out" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 > "$file"
+    [[ -s "$file" ]] || printf '%s\n' "?" > "$file"
 }
 
 dashboard_network_summary() {
+    local name="$1" file
+    file="$CACHE_DIR/network-$name.txt"
+    if [[ -s "$file" ]]; then
+        cat "$file"
+    else
+        printf '%s' "$(L '未检测 · 按 R' 'not checked · press R')"
+    fi
+}
+
+refresh_dashboard_network() {
     local name="$1" file result code sec ms
     file="$CACHE_DIR/network-$name.txt"
-    if cache_fresh "$file" 20; then
-        cat "$file"
-        return
-    fi
-
     load_profile "$name"
+
     result="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u all_proxy -u ALL_PROXY \
         curl --noproxy '*' -4 -sS -o /dev/null -w '%{http_code} %{time_total}' \
         --connect-timeout 2 --max-time 3 "$P_URL" 2>/dev/null)" || true
@@ -2727,11 +2749,23 @@ dashboard_network_summary() {
     else
         printf '✕ Unreachable\n' > "$file"
     fi
-    cat "$file"
 }
 
 dashboard_refresh() {
-    rm -f "$CACHE_DIR"/network-*.txt "$CACHE_DIR/official-quota.json"
+    local name="${1:-$(current_profile)}"
+    ui_step "$(L '刷新网络状态…' 'Refreshing network status…')"
+    refresh_dashboard_network "$name" || true
+
+    ui_step "$(L '刷新 daemon 版本…' 'Refreshing daemon version…')"
+    refresh_dashboard_daemon || true
+
+    if official_auth_source >/dev/null 2>&1; then
+        ui_step "$(L '刷新官方 Codex 额度…' 'Refreshing official Codex usage…')"
+        rm -f "$CACHE_DIR/official-quota.json"
+        refresh_official_quota_cache >/dev/null 2>&1 || true
+    fi
+
+    ui_ok "$(L 'Dashboard 状态已刷新' 'Dashboard status refreshed')"
 }
 
 cmd_menu_history() {
@@ -2794,7 +2828,7 @@ cmd_menu_network() {
             3) clear || true; cmd_direct "$name" || true; ui_pause ;;
             4) clear || true; cmd_services; ui_pause ;;
             5) clear || true; cmd_stop || true; ui_pause ;;
-            r|R) dashboard_refresh ;;
+            r|R) dashboard_refresh "$name"; sleep 0.4 ;;
             0|q|Q) return ;;
             *) ui_warn "$(L '无效选择' 'Invalid choice')"; sleep 0.5 ;;
         esac
@@ -2910,7 +2944,8 @@ cmd_menu() {
                 cmd_menu_settings
                 ;;
             r|R)
-                dashboard_refresh
+                dashboard_refresh "$name"
+                sleep 0.4
                 ;;
             q|Q|0)
                 printf '\n%s%s%s\n' "$UI_DIM" "$(L '已退出。' 'Goodbye.')" "$UI_RESET"
