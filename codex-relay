@@ -1525,7 +1525,7 @@ cmd_model_manual() {
 }
 
 cmd_model_picker() {
-    local name="$1" choice query="" value current total i rc
+    local name="$1" choice query="" value current total i
     local -a models=() visible=()
 
     while true; do
@@ -1565,10 +1565,7 @@ cmd_model_picker() {
         ui_header "MODEL // ${name^^}"
         ui_step "$(L '正在从中转站读取可用模型…' 'Reading available models from provider…')"
         models=()
-        set +e
-        mapfile -t models < <(fetch_provider_models "$name")
-        rc=$?
-        set -e 2>/dev/null || true
+        mapfile -t models < <(fetch_provider_models "$name" || true)
 
         if (( ${#models[@]} == 0 )); then
             ui_warn "$(L '没有从 /models 或 /v1/models 读取到模型列表。服务商可能不提供模型枚举接口。' 'No model list was returned from /models or /v1/models. The provider may not expose model discovery.')"
