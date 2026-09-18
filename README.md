@@ -30,8 +30,12 @@ disable_response_storage = true
 name = "OpenAI"
 base_url = "https://api.sharesai.xyz/v1"
 wire_api = "responses"
-requires_openai_auth = false
-env_key = "CODEX_RELAY_API_KEY"
+
+[model_providers.baibai.auth]
+command = "/usr/local/bin/codex-relay"
+args = ["key-read", "baibai"]
+timeout_ms = 5000
+refresh_interval_ms = 0
 ```
 
 ### nova
@@ -48,8 +52,12 @@ windows_wsl_setup_acknowledged = true
 name = "OpenAI"
 base_url = "https://ai.novacode.top"
 wire_api = "responses"
-requires_openai_auth = false
-env_key = "CODEX_RELAY_API_KEY"
+
+[model_providers.OpenAI.auth]
+command = "/usr/local/bin/codex-relay"
+args = ["key-read", "nova"]
+timeout_ms = 5000
+refresh_interval_ms = 0
 
 [features]
 goals = true
@@ -319,16 +327,21 @@ cr switch baibai
 
 也可以在 `cr menu` 中选择 **API Key 管理**。
 
-`~/.codex/config.toml` 里只会出现类似：
+`~/.codex/config.toml` 不会写真实 Key。Relay 模式现在使用 Codex 的 command-auth，例如：
 
 ```toml
-requires_openai_auth = false
-env_key = "CODEX_RELAY_API_KEY"
+[model_providers.OpenAI.auth]
+command = "/usr/local/bin/codex-relay"
+args = ["key-read", "nova"]
+timeout_ms = 5000
+refresh_interval_ms = 0
 ```
 
-真实 Key **不会写进 `config.toml`**，启动 `cx` / `cr switch` 时才把当前 profile 对应的 Key 注入当前 Codex 进程。
+Codex / app-server daemon 需要鉴权时，会执行这个只读命令，从当前用户自己的 `~/.codex-relay/secrets/PROFILE.key` 读取 Key。这样不依赖 daemon 启动时继承的环境变量，因此更适合常驻 app-server 和多中转站切换。
 
-> 已经运行中的 Codex 进程不会热加载新的 endpoint / Key，所以更换中转站仍需要结束当前 Codex 进程再启动新的进程；但不再需要重新粘贴 API Key。`cr switch PROFILE` 把“切换配置 + 加载正确 Key + 启动”合并成了一条命令。
+真实 Key **不会写进 `config.toml`**。
+
+> 已经运行中的 Codex 线程不会热切换到另一个 endpoint/provider，所以更换中转站仍建议结束当前 Codex 会话并启动新的会话；但不再需要重新粘贴 API Key。Relay 模式也不再依赖 `CODEX_RELAY_API_KEY` 环境变量。`cr switch PROFILE` 把“切换配置 + 加载正确 Key + 启动”合并成了一条命令。
 
 ## 语言设置
 
