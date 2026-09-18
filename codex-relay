@@ -2031,6 +2031,8 @@ cmd_reindex() {
     need python3
     [[ -f "$CODEX_DIR/state_5.sqlite" ]] || die "state_5.sqlite 不存在"
 
+    require_codex_stopped || return 1
+
     cmd_backup
 
     python3 - "$CODEX_DIR" <<'PY'
@@ -2083,11 +2085,7 @@ cmd_repair_history() {
 
     [[ -f "$CODEX_DIR/state_5.sqlite" ]] || die "state_5.sqlite 不存在"
 
-    if pgrep -u "$(id -u)" -af '(^|/)(codex|codex-cli)([[:space:]]|$)' >/dev/null 2>&1; then
-        echo "检测到当前用户仍有 Codex 进程运行。"
-        echo "请先完全退出 Codex，再运行: cr repair-history"
-        return 1
-    fi
+    require_codex_stopped || return 1
 
     echo "=== Codex 一键聊天恢复 ==="
     echo "CODEX_HOME: $CODEX_DIR"
@@ -2487,6 +2485,7 @@ cmd_menu() {
         ui_menu_item "14" "$(L '语言设置' 'Language')" "$(L '中文 / English' 'Chinese / English')"
         ui_menu_item "15" "$(L 'API Key 管理' 'API Key management')" "$(L '每用户 / 每中转站独立' 'per-user / per-provider')"
         ui_menu_item "16" "$(L '中转站管理' 'Provider manager')" "$(L '添加 / 编辑 / 模型 / Key / 测速' 'add / edit / model / key / speed')"
+        ui_menu_item "17" "$(L '停止当前用户全部 Codex' 'Stop all Codex for current user')" "$(L 'daemon + 残留进程' 'daemon + remaining processes')"
         ui_menu_item "0" "$(L '退出' 'Exit')" ""
 
         printf '\n%s›%s %s%s%s  ' "$UI_PINK" "$UI_RESET" "$UI_BOLD" "$(L '请选择操作' 'Choose an action')" "$UI_RESET"
@@ -2567,6 +2566,11 @@ cmd_menu() {
             16)
                 cmd_providers
                 ;;
+            17)
+                clear || true
+                cmd_stop || true
+                ui_pause
+                ;;
             0|q|Q)
                 printf '\n%s%s%s\n' "$UI_DIM" "$(L '已退出。' 'Goodbye.')" "$UI_RESET"
                 return
@@ -2612,6 +2616,10 @@ ${UI_BOLD}API keys${UI_RESET}
   cr key remove PROFILE       Remove saved key
   cr switch PROFILE           Switch config/auth + launch
 
+${UI_BOLD}Services${UI_RESET}
+  cr services                 List current-user Codex processes
+  cr stop                     Stop all current-user Codex services/processes
+
 ${UI_BOLD}Network${UI_RESET}
   cr check [PROFILE]          DNS / TCP DNS / HTTPS diagnostics
   cr direct [PROFILE]         Configure direct connection
@@ -2625,8 +2633,8 @@ ${UI_BOLD}History${UI_RESET}
   cr resume-all [PROFILE]
   cr health
   cr backup
-  cr reindex
-  cr repair-history           Backup + repair SQLite/path/provider + reindex
+  cr reindex                  Rebuild index (run cr stop first)
+  cr repair-history           Backup + repair SQLite/path/provider + reindex (run cr stop first)
 
 ${UI_BOLD}Language${UI_RESET}
   cr language                 Show language
@@ -2671,6 +2679,10 @@ ${UI_BOLD}API Key${UI_RESET}
   cr key remove PROFILE       删除保存的 Key
   cr switch PROFILE           切换 config/auth + 启动
 
+${UI_BOLD}Codex 服务${UI_RESET}
+  cr services                 查看当前用户 Codex 服务/进程
+  cr stop                     停止当前用户全部 Codex 服务/进程
+
 ${UI_BOLD}网络${UI_RESET}
   cr check [PROFILE]          DNS / TCP DNS / HTTPS 诊断
   cr direct [PROFILE]         配置无 VPN / 无代理直连
@@ -2684,8 +2696,8 @@ ${UI_BOLD}聊天历史${UI_RESET}
   cr resume-all [PROFILE]
   cr health                   检查聊天库健康状态
   cr backup                   备份聊天
-  cr reindex                  重建聊天索引
-  cr repair-history           一键备份 + 修 SQLite/路径/provider + 重建索引
+  cr reindex                  重建聊天索引（先 cr stop）
+  cr repair-history           一键备份 + 修 SQLite/路径/provider + 重建索引（先 cr stop）
 
 ${UI_BOLD}语言${UI_RESET}
   cr language                 查看当前语言
@@ -2738,6 +2750,10 @@ case "${1:-}" in
         shift; cmd_direct "$@" ;;
     setup)
         shift; cmd_setup "$@" ;;
+    services|service|ps)
+        shift; cmd_services "$@" ;;
+    stop|stop-all|shutdown)
+        shift; cmd_stop "$@" ;;
     run)
         shift; cmd_run "$@" ;;
     history)
