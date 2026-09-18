@@ -416,9 +416,7 @@ write_config_for_profile() {
         "$P_REASONING" \
         "$P_REVIEW" \
         "$P_GOALS" \
-        "$P_AUTH" \
-        "$name" \
-        "${CODEX_RELAY_BIN:-$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")}" <<'PY'
+        "$P_AUTH" <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -433,8 +431,6 @@ import sys
     review_model,
     goals,
     auth,
-    profile_name,
-    relay_bin,
 ) = sys.argv[1:]
 
 path = Path(config_path)
@@ -547,18 +543,8 @@ if kind == "custom":
         'wire_api = "responses"',
     ])
 
-    if auth == "openai":
+    if auth in {"openai", "relay"}:
         result.append("requires_openai_auth = true")
-    elif auth == "relay":
-        import json
-        result.extend([
-            "",
-            f"[model_providers.{provider}.auth]",
-            f"command = {json.dumps(relay_bin)}",
-            f"args = [{json.dumps('key-read')}, {json.dumps(profile_name)}]",
-            "timeout_ms = 5000",
-            "refresh_interval_ms = 0",
-        ])
     elif auth.startswith("env:"):
         var = auth.split(":", 1)[1]
         result.extend([
