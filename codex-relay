@@ -3127,6 +3127,8 @@ cmd_repair_history_auto() {
     running="$(codex_process_count)"
 
     ui_warn "$(L '此操作会停止当前 Linux 用户的全部 Codex 服务/进程，并可能中断正在执行或排队的任务。' 'This will stop all Codex services/processes for the current Linux user and may interrupt running or queued work.')"
+    ui_info "$(L '将扫描并恢复当前用户所有 provider 的聊天记录到统一历史库/索引；不会只恢复某一个中转站的聊天。' 'All provider histories for the current user will be scanned and restored into the shared history database/index; this is not limited to one provider.')"
+    ui_info "$(L "当前路由会保持为 $(current_profile)；恢复历史不会自动改写旧聊天的原 provider 元数据。" "The current route remains $(current_profile); restoring history does not rewrite the original provider metadata stored on old threads.")"
     ui_kv "$(L '检测到的 Codex 进程' 'detected Codex processes')" "$running"
     printf '\n'
 
@@ -3172,12 +3174,12 @@ cmd_menu_history() {
         ui_header "$(L '聊天历史' 'CHAT / HISTORY')"
         ui_menu_item "1" "$(L '最近聊天' 'Recent chats')" "$(L '最近 50 个会话' 'latest 50 threads')"
         ui_menu_item "2" "$(L '搜索聊天' 'Search chats')" ""
-        ui_menu_item "3" "$(L '恢复一个聊天' 'Recover a chat')" ""
-        ui_menu_item "4" "$(L '显示全部可恢复聊天' 'Resume all')" ""
+        ui_menu_item "3" "$(L '继续单个聊天' 'Resume one chat')" "$(L '选择一条旧会话继续' 'pick one existing thread')"
+        ui_menu_item "4" "$(L '浏览全部聊天' 'Browse all chats')" "$(L '打开 Codex 全部会话选择器' 'open Codex all-thread picker')"
         ui_menu_item "5" "$(L '健康检查' 'Health check')" "sessions · SQLite · index"
         ui_menu_item "6" "$(L '备份聊天历史' 'Backup history')" ""
         ui_menu_item "7" "$(L '重建索引' 'Rebuild index')" "$(L '要求先停止 Codex' 'Codex must be stopped')"
-        ui_menu_item "8" "$(L '一键修复历史' 'One-click repair')" "$(L '二次确认 → 停止 Codex → backup → repair → reindex' 'confirm → stop Codex → backup → repair → reindex')"
+        ui_menu_item "8" "$(L '一键恢复全部聊天记录' 'Restore all chat history')" "$(L '全部 provider · 停止 Codex → backup → repair → reindex' 'all providers · stop Codex → backup → repair → reindex')"
         ui_menu_item "0" "$(L '返回' 'Back')" ""
         printf '\n> '; read -r choice
         case "$choice" in
