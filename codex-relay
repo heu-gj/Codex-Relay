@@ -2669,6 +2669,146 @@ REPAIRPY
 }
 
 # -----------------------------
+# Dashboard 状态
+# -----------------------------
+dashboard_cli_version() {
+    command -v codex >/dev/null 2>&1 || { printf '%s' "N/A"; return; }
+    codex --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || printf '%s' "?"
+}
+
+dashboard_daemon_version() {
+    command -v codex >/dev/null 2>&1 || { printf '%s' "N/A"; return; }
+    local out
+    out="$(codex app-server daemon version 2>/dev/null || true)"
+    if [[ -z "$out" ]]; then
+        printf '%s' "$(L '未运行/未知' 'stopped/unknown')"
+        return
+    fi
+    printf '%s\n' "$out" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || printf '%s' "?"
+}
+
+dashboard_network_summary() {
+    local name="$1" file result code sec ms
+    file="$CACHE_DIR/network-$name.txt"
+    if cache_fresh "$file" 20; then
+        cat "$file"
+        return
+    fi
+
+    load_profile "$name"
+    result="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u all_proxy -u ALL_PROXY \
+        curl --noproxy '*' -4 -sS -o /dev/null -w '%{http_code} %{time_total}' \
+        --connect-timeout 2 --max-time 3 "$P_URL" 2>/dev/null)" || true
+
+    code="${result%% *}"
+    sec="${result#* }"
+    if [[ -n "$result" && "$code" != "000" ]]; then
+        ms="$(awk -v t="$sec" 'BEGIN{printf "%.0f",t*1000}')"
+        printf '✓ Direct · %s ms\n' "$ms" > "$file"
+    else
+        printf '✕ Unreachable\n' > "$file"
+    fi
+    cat "$file"
+}
+
+dashboard_refresh() {
+    rm -f "$CACHE_DIR"/network-*.txt "$CACHE_DIR/official-quota.json"
+}
+
+cmd_menu_history() {
+    local choice keyword
+    while true; do
+        clear || true
+        ui_header "$(L '聊天历史' 'CHAT / HISTORY')"
+        ui_menu_item "1" "$(L '最近聊天' 'Recent chats')" "$(L '最近 50 个会话' 'latest 50 threads')"
+        ui_menu_item "2" "$(L '搜索聊天' 'Search chats')" ""
+        ui_menu_item "3" "$(L '恢复一个聊天' 'Recover a chat')" ""
+        ui_menu_item "4" "$(L '显示全部可恢复聊天' 'Resume all')" ""
+        ui_menu_item "5" "$(L '健康检查' 'Health check')" "sessions · SQLite · index"
+        ui_menu_item "6" "$(L '备份聊天历史' 'Backup history')" ""
+        ui_menu_item "7" "$(L '重建索引' 'Rebuild index')" "$(L '要求先停止 Codex' 'Codex must be stopped')"
+        ui_menu_item "8" "$(L '一键修复历史' 'One-click repair')" "backup → repair → reindex"
+        ui_menu_item "0" "$(L '返回' 'Back')" ""
+        printf '\n> '; read -r choice
+        case "$choice" in
+            1) clear || true; cmd_history 50; ui_pause ;;
+            2)
+                printf '%s: ' "$(L '关键词' 'Keyword')"
+                read -r keyword
+                [[ -n "$keyword" ]] && { clear || true; cmd_search "$keyword"; ui_pause; }
+                ;;
+            3) cmd_recover_menu ;;
+            4) cmd_resume_all ;;
+            5) clear || true; cmd_health; ui_pause ;;
+            6) clear || true; cmd_backup; ui_pause ;;
+            7) clear || true; cmd_reindex || true; ui_pause ;;
+            8) clear || true; cmd_repair_history || true; ui_pause ;;
+            0|q|Q) return ;;
+            *) ui_warn "$(L '无效选择' 'Invalid choice')"; sleep 0.5 ;;
+        esac
+    done
+}
+
+cmd_menu_network() {
+    local choice name
+    while true; do
+        name="$(current_profile)"
+        clear || true
+        ui_header "$(L '网络与服务' 'NETWORK & SERVICES')"
+        ui_kv "profile" "$name"
+        ui_kv "Codex CLI" "$(dashboard_cli_version)"
+        ui_kv "daemon" "$(dashboard_daemon_version)"
+        ui_kv "$(L '进程' 'processes')" "$(codex_process_count)"
+        ui_kv "$(L '直连' 'network')" "$(dashboard_network_summary "$name")"
+        printf '\n'
+        ui_menu_item "1" "$(L '网络诊断' 'Network diagnostics')" "DNS · TCP DNS · HTTPS"
+        ui_menu_item "2" "$(L '测速' 'Speed test')" ""
+        ui_menu_item "3" "$(L 'Direct 修复' 'Direct repair')" "/etc/hosts"
+        ui_menu_item "4" "$(L '查看 Codex 服务' 'Show Codex services')" ""
+        ui_menu_item "5" "$(L '停止当前用户全部 Codex' 'Stop all Codex for current user')" ""
+        ui_menu_item "R" "$(L '刷新状态' 'Refresh status')" ""
+        ui_menu_item "0" "$(L '返回' 'Back')" ""
+        printf '\n> '; read -r choice
+        case "$choice" in
+            1) clear || true; cmd_check "$name" || true; ui_pause ;;
+            2) clear || true; cmd_speed "$name" || true; ui_pause ;;
+            3) clear || true; cmd_direct "$name" || true; ui_pause ;;
+            4) clear || true; cmd_services; ui_pause ;;
+            5) clear || true; cmd_stop || true; ui_pause ;;
+            r|R) dashboard_refresh ;;
+            0|q|Q) return ;;
+            *) ui_warn "$(L '无效选择' 'Invalid choice')"; sleep 0.5 ;;
+        esac
+    done
+}
+
+cmd_menu_settings() {
+    local choice
+    while true; do
+        clear || true
+        ui_header "$(L '设置' 'SETTINGS')"
+        ui_menu_item "1" "$(L '官方 Codex 额度' 'Official Codex usage')" "$(official_quota_summary)"
+        ui_menu_item "2" "$(L 'API Key 管理' 'API Key management')" ""
+        ui_menu_item "3" "$(L 'Profile 列表' 'Profile list')" ""
+        ui_menu_item "4" "$(L '查看 config.toml' 'Show config.toml')" ""
+        ui_menu_item "5" "$(L '语言' 'Language')" "$RELAY_LANG"
+        ui_menu_item "6" "$(L '当前状态' 'Current status')" ""
+        ui_menu_item "0" "$(L '返回' 'Back')" ""
+        printf '\n> '; read -r choice
+        case "$choice" in
+            1) clear || true; cmd_quota --refresh || true; ui_pause ;;
+            2) cmd_key_menu ;;
+            3) clear || true; cmd_list; ui_pause ;;
+            4) clear || true; ui_header "CONFIG.TOML"; cmd_show_config; ui_pause ;;
+            5) cmd_language_menu ;;
+            6) clear || true; cmd_status; ui_pause ;;
+            0|q|Q) return ;;
+            *) ui_warn "$(L '无效选择' 'Invalid choice')"; sleep 0.5 ;;
+        esac
+    done
+}
+
+# -----------------------------
 # 菜单
 # -----------------------------
 cmd_menu() {
