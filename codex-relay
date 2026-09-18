@@ -80,6 +80,9 @@ codex_process_pids() {
         comm="$(cat "$proc/comm" 2>/dev/null || true)"
 
         case "$base:$comm" in
+            codex-relay:*|*:codex-relay|codex-relay-*:*|*:codex-relay-*)
+                continue
+                ;;
             codex:*|codex-*:*|*:codex|*:codex-*)
                 printf '%s\n' "$pid"
                 ;;
