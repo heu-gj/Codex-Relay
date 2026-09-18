@@ -63,7 +63,7 @@ Nova 默认**不会**写入不存在的 `model_catalog_json`，避免 Codex 启�
 /usr/local/bin/codex-relay
 ```
 
-每个用户仍然使用自己的：
+每个用户仍然使用自己的 Codex 数据目录：
 
 ```text
 ~/.codex/config.toml
@@ -72,7 +72,17 @@ Nova 默认**不会**写入不存在的 `model_catalog_json`，避免 Codex 启�
 ~/.codex/state_5.sqlite
 ```
 
-这样管理员只需要维护一份程序；不同用户的 API 认证、配置和聊天记录仍然完全隔离。
+而 Codex-Relay 自己的状态独立放在：
+
+```text
+~/.codex-relay/current
+~/.codex-relay/relays.tsv
+~/.codex-relay/official-model
+~/.codex-relay/language
+~/.codex-relay/backups/
+```
+
+这样 `~/.codex` 只保留 Codex 本身的数据，relay 的 profile、语言、当前选择和备份不会再混进去。
 
 ### 1. 管理员：全局安装 / 更新
 
@@ -206,6 +216,8 @@ hash -r
 ```
 
 > 重点：程序全局共用，但每个用户的 `~/.codex` 仍然独立。因此不会共享 API Key，也不会串聊天记录。
+
+旧版曾写在 `~/.codex` 里的 `.relay-current`、`relays.tsv`、`.official-model` 等管理器状态，新版第一次运行时会自动迁移到 `~/.codex-relay/`；不会移动或修改 Codex 的认证、session 和数据库。
 
 ## 快速开始
 
@@ -404,9 +416,14 @@ cr repair-history
 ```text
 /usr/local/bin/codex-relay        # 全局唯一主程序
 
-/home/userA/.codex/               # userA 独立配置 / 认证 / 聊天
-/home/userB/.codex/               # userB 独立配置 / 认证 / 聊天
-/home/userC/.codex/               # userC 独立配置 / 认证 / 聊天
+/home/userA/.codex/               # userA 的 Codex 配置 / 认证 / 聊天
+/home/userA/.codex-relay/         # userA 的 relay 状态 / profile / 备份
+
+/home/userB/.codex/
+ /home/userB/.codex-relay/
+
+ /home/userC/.codex/
+ /home/userC/.codex-relay/
 ```
 
 因此：
@@ -415,7 +432,8 @@ cr repair-history
 - GitHub 更新后只需要管理员更新一次
 - 新用户不需要访问 GitHub
 - `cr` / `cx` 每个用户在自己的 `~/.bashrc` 中配置
-- `~/.codex/config.toml` 每个用户独立
+- `~/.codex/` 只用于 Codex 自己的配置、认证和聊天
+- `~/.codex-relay/` 只用于 Codex-Relay 的状态、profile、语言和备份
 - `~/.codex/auth.json` 每个用户独立，不要互相复制
 - `~/.codex/sessions/` 和 SQLite 聊天数据库每个用户独立
 - `/etc/hosts` 是系统级配置，一次有效修改可以被所有用户共享
