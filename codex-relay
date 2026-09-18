@@ -864,6 +864,59 @@ cmd_provider_detail() {
     done
 }
 
+cmd_providers() {
+    local -a ps=()
+    local p choice i mark key_state
+    while true; do
+        mapfile -t ps < <(profile_names)
+
+        clear || true
+        ui_header "$(L '中转站管理' 'PROVIDER MANAGER')"
+        printf '\n'
+        i=1
+        for p in "${ps[@]}"; do
+            load_profile "$p"
+            mark=" "
+            [[ "$(current_profile)" == "$p" ]] && mark="●"
+            if [[ "$P_AUTH" == "relay" ]]; then
+                if relay_key_exists "$p"; then
+                    key_state="Key✓"
+                else
+                    key_state="$(L '无Key' 'NoKey')"
+                fi
+            else
+                key_state="$(L 'Codex认证' 'CodexAuth')"
+            fi
+            ui_menu_item "$i" "$mark $p" "$P_MODEL · $key_state"
+            i=$((i+1))
+        done
+
+        printf '\n'
+        ui_menu_item "A" "$(L '添加中转站' 'Add provider')" "$(L '地址 / 模型 / Key' 'endpoint / model / key')"
+        ui_menu_item "0" "$(L '返回' 'Back')" ""
+        printf '\n> '
+        read -r choice
+
+        case "$choice" in
+            a|A)
+                cmd_add_interactive
+                ui_pause
+                ;;
+            0|q|Q)
+                return
+                ;;
+            *)
+                if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#ps[@]} )); then
+                    cmd_provider_detail "${ps[$((choice-1))]}"
+                else
+                    ui_warn "$(L '无效选择' 'Invalid choice')"
+                    sleep 0.5
+                fi
+                ;;
+        esac
+    done
+}
+
 # -----------------------------
 # 网络 / 无 VPN 直连
 # -----------------------------
