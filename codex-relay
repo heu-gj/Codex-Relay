@@ -2013,50 +2013,6 @@ print("installed:", new_ip, host)
 PY
 }
 
-provider_responses_url() {
-    local url="$1"
-    if [[ "$url" == */responses ]]; then
-        printf '%s' "$url"
-    else
-        printf '%s/responses' "${url%/}"
-    fi
-}
-
-provider_reachability_probe() {
-    local name="$1" url responses_url result code sec
-
-    load_profile "$name"
-    url="$P_URL"
-    responses_url="$(provider_responses_url "$url")"
-
-    result="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u all_proxy -u ALL_PROXY \
-        curl --noproxy '*' -sS -o /dev/null -w '%{http_code} %{time_total}' \
-        --connect-timeout 4 --max-time 8 \
-        -X POST -H 'Content-Type: application/json' --data '{}' \
-        "$responses_url" 2>/dev/null || true)"
-
-    code="${result%% *}"
-    sec="${result#* }"
-    if [[ -n "$result" && "$code" != "000" ]]; then
-        printf 'responses\t%s\t%s\n' "$code" "$sec"
-        return 0
-    fi
-
-    result="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u all_proxy -u ALL_PROXY \
-        curl --noproxy '*' -sS -o /dev/null -w '%{http_code} %{time_total}' \
-        --connect-timeout 4 --max-time 8 \
-        "$url" 2>/dev/null || true)"
-
-    code="${result%% *}"
-    sec="${result#* }"
-    if [[ -n "$result" && "$code" != "000" ]]; then
-        printf 'base\t%s\t%s\n' "$code" "$sec"
-        return 0
-    fi
-
-    return 1
-}
-
 diagnostic_row() {
     local kind="$1" label="$2" value="$3"
     case "$kind" in
@@ -2121,20 +2077,19 @@ cmd_check() {
         diagnostic_row warn "$(L 'TCP DNS' 'TCP DNS')" "$(L '未安装 dig' 'dig not installed')"
     fi
 
-    https_result="$(provider_reachability_probe "$name" || true)"
-    if [[ -n "$https_result" ]]; then
-        local probe_kind
-        IFS=$'\t' read -r probe_kind code sec <<< "$https_result"
+    https_result="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u all_proxy -u ALL_PROXY \
+        curl --noproxy '*' -4 -sS -o /dev/null -w '%{http_code} %{time_total}' \
+        --connect-timeout 4 --max-time 8 "$P_URL" 2>/dev/null || true)"
+
+    code="${https_result%% *}"
+    sec="${https_result#* }"
+    if [[ -n "$https_result" && "$code" != "000" ]]; then
         https_ok=1
         ms="$(awk -v t="$sec" 'BEGIN{printf "%.0f",t*1000}')"
-        if [[ "$probe_kind" == "responses" ]]; then
-            diagnostic_row ok "$(L 'Codex /responses' 'Codex /responses')" "HTTP $code · ${ms} ms"
-        else
-            diagnostic_row ok "$(L 'Base URL' 'Base URL')" "HTTP $code · ${ms} ms"
-        fi
-        printf '✓ Codex route · %s ms\n' "$ms" > "$CACHE_DIR/network-$name.txt"
+        diagnostic_row ok "$(L 'Direct HTTPS' 'Direct HTTPS')" "HTTP $code · ${ms} ms"
+        printf '✓ Direct · %s ms\n' "$ms" > "$CACHE_DIR/network-$name.txt"
     else
-        diagnostic_row fail "$(L 'Codex route' 'Codex route')" "$(L '无代理直连未获得 HTTP 响应' 'no HTTP response over direct no-proxy route')"
+        diagnostic_row fail "$(L 'Direct HTTPS' 'Direct HTTPS')" "$(L '连接失败' 'connection failed')"
         printf '✕ Unreachable\n' > "$CACHE_DIR/network-$name.txt"
     fi
 
@@ -3379,14 +3334,19 @@ dashboard_network_summary() {
 }
 
 refresh_dashboard_network() {
-    local name="$1" file result probe_kind code sec ms
+    local name="$1" file result code sec ms
     file="$CACHE_DIR/network-$name.txt"
+    load_profile "$name"
 
-    result="$(provider_reachability_probe "$name" || true)"
-    if [[ -n "$result" ]]; then
-        IFS=$'\t' read -r probe_kind code sec <<< "$result"
+    result="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u all_proxy -u ALL_PROXY \
+        curl --noproxy '*' -4 -sS -o /dev/null -w '%{http_code} %{time_total}' \
+        --connect-timeout 2 --max-time 3 "$P_URL" 2>/dev/null)" || true
+
+    code="${result%% *}"
+    sec="${result#* }"
+    if [[ -n "$result" && "$code" != "000" ]]; then
         ms="$(awk -v t="$sec" 'BEGIN{printf "%.0f",t*1000}')"
-        printf '✓ Codex route · %s ms\n' "$ms" > "$file"
+        printf '✓ Direct · %s ms\n' "$ms" > "$file"
     else
         printf '✕ Unreachable\n' > "$file"
     fi
