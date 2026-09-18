@@ -11,10 +11,11 @@ REGISTRY="$RELAY_DIR/relays.tsv"
 OFFICIAL_MODEL_FILE="$RELAY_DIR/official-model"
 LANGUAGE_FILE="$RELAY_DIR/language"
 SECRETS_DIR="$RELAY_DIR/secrets"
+OVERRIDES_DIR="$RELAY_DIR/overrides"
 HOSTS_TAG="codex-relay-manager"
 
-mkdir -p "$CODEX_DIR" "$RELAY_DIR" "$RELAY_DIR/backups/config" "$RELAY_DIR/backups/history" "$SECRETS_DIR"
-chmod 700 "$RELAY_DIR" "$SECRETS_DIR" 2>/dev/null || true
+mkdir -p "$CODEX_DIR" "$RELAY_DIR" "$RELAY_DIR/backups/config" "$RELAY_DIR/backups/history" "$SECRETS_DIR" "$OVERRIDES_DIR"
+chmod 700 "$RELAY_DIR" "$SECRETS_DIR" "$OVERRIDES_DIR" 2>/dev/null || true
 
 # 从旧版 ~/.codex 中迁移少量 relay 状态文件。只迁移管理器自己的文件，
 # 不触碰 auth.json、sessions、SQLite 或其他 Codex 数据。
@@ -336,6 +337,30 @@ load_profile() {
             [[ "$P_REVIEW" == "-" ]] && P_REVIEW=""
             ;;
     esac
+
+    local override_file override_value
+    override_file="$OVERRIDES_DIR/$name.conf"
+    if [[ -f "$override_file" ]]; then
+        override_value="$(sed -n 's/^url=//p' "$override_file" | head -n1)"
+        [[ -n "$override_value" ]] && P_URL="$override_value"
+
+        override_value="$(sed -n 's/^model=//p' "$override_file" | head -n1)"
+        [[ -n "$override_value" ]] && P_MODEL="$override_value"
+
+        override_value="$(sed -n 's/^reasoning=//p' "$override_file" | head -n1)"
+        if [[ "$override_value" == "__EMPTY__" ]]; then
+            P_REASONING=""
+        elif [[ -n "$override_value" ]]; then
+            P_REASONING="$override_value"
+        fi
+
+        override_value="$(sed -n 's/^review=//p' "$override_file" | head -n1)"
+        if [[ "$override_value" == "__EMPTY__" ]]; then
+            P_REVIEW=""
+        elif [[ -n "$override_value" ]]; then
+            P_REVIEW="$override_value"
+        fi
+    fi
 }
 
 profile_exists() {
