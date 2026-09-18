@@ -1420,6 +1420,102 @@ provider_card() {
         "$UI_BLUE" "$UI_RESET" "$network"
 }
 
+provider_model_urls() {
+    local name="$1" base
+    load_profile "$name"
+    base="${P_URL%/}"
+
+    printf '%s/models\n' "$base"
+    case "$base" in
+        */v1) ;;
+        *) printf '%s/v1/models\n' "$base" ;;
+    esac
+}
+
+fetch_provider_models() {
+    local name="$1" key header_file body_file url code parsed
+    load_profile "$name"
+
+    [[ "$P_AUTH" == "relay" ]] || return 2
+    relay_key_exists "$name" || return 3
+    command -v curl >/dev/null 2>&1 || return 4
+    command -v python3 >/dev/null 2>&1 || return 4
+
+    key="$(read_relay_key "$name")"
+    header_file="$(mktemp "$RELAY_DIR/.models-header.XXXXXX")"
+    body_file="$(mktemp "$RELAY_DIR/.models-body.XXXXXX")"
+    chmod 600 "$header_file" "$body_file"
+    printf 'Authorization: Bearer %s\n' "$key" > "$header_file"
+
+    while IFS= read -r url; do
+        [[ -n "$url" ]] || continue
+        : > "$body_file"
+
+        code="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u all_proxy -u ALL_PROXY \
+            curl --noproxy '*' -sS \
+            --connect-timeout 5 --max-time 12 \
+            -H "@$header_file" \
+            -H 'Accept: application/json' \
+            -o "$body_file" -w '%{http_code}' \
+            "$url" 2>/dev/null || true)"
+
+        [[ "$code" =~ ^2[0-9][0-9]$ ]] || continue
+
+        parsed="$(python3 - "$body_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    obj = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace"))
+except Exception:
+    raise SystemExit(0)
+
+if isinstance(obj, dict):
+    if isinstance(obj.get("data"), list):
+        items = obj["data"]
+    elif isinstance(obj.get("models"), list):
+        items = obj["models"]
+    else:
+        items = []
+elif isinstance(obj, list):
+    items = obj
+else:
+    items = []
+
+seen = set()
+models = []
+for item in items:
+    if isinstance(item, str):
+        mid = item
+    elif isinstance(item, dict):
+        mid = item.get("id") or item.get("model") or item.get("name")
+    else:
+        mid = None
+    if not isinstance(mid, str):
+        continue
+    mid = mid.strip()
+    if not mid or mid in seen:
+        continue
+    seen.add(mid)
+    models.append(mid)
+
+for mid in sorted(models, key=str.lower):
+    print(mid)
+PY
+)"
+
+        if [[ -n "$parsed" ]]; then
+            rm -f "$header_file" "$body_file"
+            printf '%s\n' "$parsed"
+            return 0
+        fi
+    done < <(provider_model_urls "$name")
+
+    rm -f "$header_file" "$body_file"
+    return 1
+}
+
 cmd_provider_detail() {
     local name="$1" choice v key_state current network host type_badge status_text model_line
     while true; do
