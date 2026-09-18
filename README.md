@@ -297,11 +297,42 @@ CODEX RELAY // MODEL // BAIBAI
  [0] 返回
 ```
 
-如果服务商不提供模型枚举接口，仍可以手动输入：
+选择模型后，Relay 会继续进入 **Reasoning Effort / 推理强度** 页面，再一次性保存模型与推理配置：
+
+```text
+REASONING // BAIBAI
+
+◆ 即将应用
+  模型           gpt-5.6-sol
+  当前推理强度   xhigh
+
+◆ 推理强度
+  [Enter] Auto      推荐 · 不写 model_reasoning_effort
+  [K]     保持当前  xhigh
+  [N]     None
+  [1]     Minimal
+  [2]     Low
+  [3]     Medium
+  [4]     High
+  [5]     XHigh
+  [M]     手动填写
+  [0]     取消，不修改模型
+```
+
+不同模型支持的 reasoning effort 不完全一致，因此对未知或自定义模型，默认推荐 **Auto**。Auto 的含义是清除旧的 `model_reasoning_effort`，让 Codex / 模型使用自己的默认行为，而不是写入字符串 `"auto"`。
+
+如果在推理强度页面取消，模型也不会被修改，不会出现“模型已经换了但 reasoning 还没选完”的半状态。
+
+如果服务商不提供模型枚举接口，仍可以手动输入。CLI 也支持同时指定推理强度：
 
 ```bash
-cr model PROFILE MODEL
+cr model PROFILE MODEL               # 默认 Auto：清除旧 reasoning
+cr model PROFILE MODEL high          # 明确使用 high
+cr model PROFILE MODEL xhigh         # 明确使用 xhigh
+cr model PROFILE MODEL keep          # 保留当前 reasoning
 ```
+
+内置 baibai 的初始默认仍然是 `gpt-5.6-sol + xhigh`；只有用户主动修改模型时，才应用上述新规则。
 
 ### 添加自定义中转站
 
@@ -599,7 +630,7 @@ Nova 的 Base URL 故意不自动追加 `/v1`。Relay 也不会写入不存在�
 | `cr use NAME` | 切换 config/auth，不启动 |
 | `cr switch NAME` | 切换 config/auth 并启动 Codex |
 | `cx` | 使用当前 profile 启动官方 Codex |
-| `cr model PROFILE MODEL` | 修改当前用户默认模型 |
+| `cr model PROFILE MODEL [REASONING\|auto\|keep]` | 修改模型；省略第三参数时使用 Auto，避免继承旧模型 reasoning |
 | `cr endpoint PROFILE URL` | 修改当前用户 endpoint |
 | `cr speed [PROFILE]` | 无代理 HTTPS 测速 |
 | `cr key` | 查看 Key 状态 |
