@@ -545,7 +545,7 @@ ROUTE // BAIBAI
 
 - 按 Enter 切换并启动 Codex
 - 按 `U` 只切换 config/auth，不启动
-- 修改当前用户的默认模型
+- 选择 / 修改当前用户的默认模型；进入模型选择时会先尝试读取中转站的 `/models` 或 `/v1/models`
 - 修改当前用户的 API 地址
 - 设置 / 更新当前用户自己的 API Key
 - 按 `R` 刷新该中转站网络缓存
@@ -615,6 +615,18 @@ cr switch NAME
 ```bash
 cr model nova gpt-5.6
 ```
+
+在交互界面中，进入某个 relay 中转站后选择 `[2] 选择 / 修改默认模型`，Relay 会使用当前用户保存的该中转站 API Key 尝试读取：
+
+```text
+<Base URL>/models
+<Base URL>/v1/models
+```
+
+例如 baibai 的 Base URL 是 `https://api.sharesai.xyz/v1`，会读取 `https://api.sharesai.xyz/v1/models`；对于不带 `/v1` 的地址，会依次尝试 `/models` 和 `/v1/models`。
+
+读取成功后可以直接按编号选择模型；当前模型会显示 `● 当前`。最多显示前 60 个模型，也可以重新读取或手动输入模型 ID。如果服务商不提供模型枚举接口，仍可使用手动输入，不影响原有功能。
+
 
 只修改当前用户看到的 Nova endpoint：
 
