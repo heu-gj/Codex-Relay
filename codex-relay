@@ -61,6 +61,126 @@ is_ipv4() {
     [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
 }
 
+# -----------------------------
+# 当前用户 Codex 进程 / 服务
+# -----------------------------
+codex_process_pids() {
+    local uid proc pid exe base comm
+    uid="$(id -u)"
+
+    for proc in /proc/[0-9]*; do
+        [[ -d "$proc" ]] || continue
+        pid="${proc##*/}"
+        [[ "$pid" == "$" ]] && continue
+
+        [[ "$(stat -c '%u' "$proc" 2>/dev/null || true)" == "$uid" ]] || continue
+
+        exe="$(readlink -f "$proc/exe" 2>/dev/null || true)"
+        base="${exe##*/}"
+        comm="$(cat "$proc/comm" 2>/dev/null || true)"
+
+        case "$base:$comm" in
+            codex:*|codex-*:*|*:codex|*:codex-*)
+                printf '%s\n' "$pid"
+                ;;
+        esac
+    done
+}
+
+codex_process_count() {
+    local count=0 _
+    while IFS= read -r _; do
+        [[ -n "$_" ]] && count=$((count + 1))
+    done < <(codex_process_pids)
+    printf '%s' "$count"
+}
+
+cmd_services() {
+    ui_header "$(L '当前用户 Codex 服务' 'CURRENT USER CODEX SERVICES')"
+    ui_kv "$(L '用户' 'user')" "$(id -un)"
+    ui_kv "UID" "$(id -u)"
+    printf '\n'
+
+    local found=0 pid exe args
+    while IFS= read -r pid; do
+        [[ -n "$pid" ]] || continue
+        found=1
+        exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
+        args="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+        printf '  PID %-7s %s\n' "$pid" "${args:-$exe}"
+    done < <(codex_process_pids)
+
+    if [[ "$found" == "0" ]]; then
+        ui_ok "$(L '当前用户没有运行中的 Codex 进程' 'No Codex processes are running for this user')"
+    else
+        printf '\n'
+        ui_info "$(L '停止当前用户全部 Codex: cr stop' 'Stop all Codex processes for this user: cr stop')"
+    fi
+}
+
+cmd_stop() {
+    ui_header "$(L '停止当前用户全部 Codex' 'STOP ALL CODEX FOR CURRENT USER')"
+    ui_warn "$(L '这会中断当前用户正在运行或排队的 Codex 工作，不影响其他 Linux 用户。' 'This interrupts running or queued Codex work for the current user only.')"
+    ui_kv "$(L '用户' 'user')" "$(id -un)"
+    ui_kv "UID" "$(id -u)"
+    printf '\n'
+
+    local before pid remaining deadline
+    before="$(codex_process_count)"
+
+    if command -v codex >/dev/null 2>&1; then
+        ui_step "$(L '先请求官方 app-server daemon 优雅停止' 'Requesting graceful app-server daemon stop first')"
+        if codex app-server daemon stop >/dev/null 2>&1; then
+            ui_ok "$(L 'daemon stop 已完成' 'daemon stop completed')"
+        else
+            ui_warn "$(L '官方 daemon stop 未成功或当前没有托管 daemon，继续清理当前用户残留 Codex 进程' 'Managed daemon stop failed or no managed daemon exists; continuing with current-user Codex processes')"
+        fi
+    fi
+
+    mapfile -t remaining < <(codex_process_pids)
+    if (( ${#remaining[@]} > 0 )); then
+        ui_step "$(L '向残留 Codex 进程发送 TERM' 'Sending TERM to remaining Codex processes')"
+        for pid in "${remaining[@]}"; do
+            kill -TERM "$pid" 2>/dev/null || true
+        done
+
+        deadline=$((SECONDS + 5))
+        while (( SECONDS < deadline )); do
+            [[ "$(codex_process_count)" == "0" ]] && break
+            sleep 0.2
+        done
+    fi
+
+    mapfile -t remaining < <(codex_process_pids)
+    if (( ${#remaining[@]} > 0 )); then
+        ui_warn "$(L '仍有 Codex 进程未退出，发送 KILL' 'Some Codex processes remain; sending KILL')"
+        for pid in "${remaining[@]}"; do
+            kill -KILL "$pid" 2>/dev/null || true
+        done
+        sleep 0.2
+    fi
+
+    rm -f "$AUTH_RELOAD_FLAG"
+
+    if [[ "$(codex_process_count)" == "0" ]]; then
+        ui_ok "$(L "已停止当前用户全部 Codex（原检测到 $before 个进程）" "Stopped all Codex processes for this user (initially found $before)")"
+        ui_info "$(L '现在可以安全进行聊天历史修复、重建索引或维护 auth/config。' 'You can now repair history, rebuild indexes, or maintain auth/config.')"
+        return 0
+    fi
+
+    ui_fail "$(L '仍检测到 Codex 进程，请运行 cr services 查看' 'Codex processes still remain; run cr services to inspect them')"
+    return 1
+}
+
+require_codex_stopped() {
+    if [[ "$(codex_process_count)" != "0" ]]; then
+        ui_warn "$(L '检测到当前用户仍有 Codex 服务/进程运行。' 'Codex services/processes are still running for this user.')"
+        ui_info "$(L '请先执行: cr stop' 'Run first: cr stop')"
+        return 1
+    fi
+    return 0
+}
+
 
 # -----------------------------
 # 语言 / Language
