@@ -1211,24 +1211,140 @@ cmd_switch() {
 }
 
 cmd_add_interactive() {
-    local name url model provider yn
+    local name="" url="" model="" provider="" yn="" confirm="" existing=0
+
     clear || true
-    ui_header "$(L '添加中转站' 'ADD PROVIDER')"
-    printf '\n%s: ' "$(L '名称' 'Name')"; read -r name
-    [[ -n "$name" ]] || return
-    case "$name" in
-        nova|baibai|official) ui_warn "$(L '这是内置保留名称' 'Reserved built-in name')"; return ;;
+    ui_header "$(L '添加中转站向导' 'ADD PROVIDER WIZARD')"
+
+    ui_info "$(L '将创建当前用户可用的自定义中转站。不会修改其他 Linux 用户的配置。' 'This creates a custom provider for the current user only and does not change other Linux users.')"
+    ui_info "$(L '整个向导不会自动联网；保存后可按 R 或运行 cr check PROFILE 测试网络。' 'The wizard does not make network requests automatically; test later with R or cr check PROFILE.')"
+
+    while true; do
+        ui_section "$(L '步骤 1/4 · 中转站名称' 'STEP 1/4 · PROVIDER NAME')"
+        printf '  %s\n' "$(L '这是 Codex-Relay 里的本地名称，用于 cr switch NAME / cr key set NAME。' 'This is the local Codex-Relay name used by cr switch NAME / cr key set NAME.')"
+        printf '  %s\n' "$(L '允许: 字母、数字、下划线、短横线；例如 myrelay、company-ai、relay_2。' 'Allowed: letters, numbers, underscore, hyphen; e.g. myrelay, company-ai, relay_2.')"
+        printf '  %s\n' "$(L '保留名称 nova / baibai / official 不能使用。输入 0 可取消。' 'Reserved names nova / baibai / official cannot be used. Enter 0 to cancel.')"
+        printf '\n%s' "$(L '名称: ' 'Name: ')"
+        IFS= read -r name
+
+        [[ "$name" == "0" ]] && { ui_info "$(L '已取消添加中转站。' 'Provider creation cancelled.')"; return; }
+        if [[ -z "$name" ]]; then
+            ui_warn "$(L '名称不能为空。' 'Name cannot be empty.')"
+            continue
+        fi
+        if [[ ! "$name" =~ ^[A-Za-z0-9_-]+$ ]]; then
+            ui_warn "$(L '名称格式非法，只能使用字母、数字、下划线和短横线。' 'Invalid name; use only letters, numbers, underscore, and hyphen.')"
+            continue
+        fi
+        case "$name" in
+            nova|baibai|official)
+                ui_warn "$(L '这是内置保留名称，请换一个名称。' 'That is a reserved built-in name; choose another.')"
+                continue
+                ;;
+        esac
+
+        if profile_exists "$name"; then
+            existing=1
+            ui_warn "$(L "当前用户已经存在名为 $name 的中转站；继续会覆盖它的基础定义，但不会自动删除已保存的 Key。" "A provider named $name already exists for this user; continuing replaces its base definition but does not automatically delete its saved key.")"
+            printf '%s' "$(L '输入 OVERWRITE 或“覆盖”继续，其他输入取消: ' 'Type OVERWRITE or replace to continue; anything else cancels: ')"
+            IFS= read -r confirm
+            case "$confirm" in
+                OVERWRITE|overwrite|覆盖|replace|REPLACE) ;;
+                *) ui_info "$(L '已取消添加中转站。' 'Provider creation cancelled.')"; return ;;
+            esac
+        fi
+        break
+    done
+
+    while true; do
+        ui_section "$(L '步骤 2/4 · API 地址' 'STEP 2/4 · API ENDPOINT')"
+        printf '  %s\n' "$(L '填写服务商提供的 OpenAI 兼容 Base URL。必须以 http:// 或 https:// 开头。' 'Enter the OpenAI-compatible Base URL supplied by the provider. It must start with http:// or https://.')"
+        printf '  %s\n' "$(L '是否需要 /v1 必须以服务商文档为准，不要自行补全。' 'Whether /v1 is required depends on the provider documentation; do not add it automatically.')"
+        printf '  %s\n' "$(L '示例: https://api.example.com/v1   或   https://gateway.example.com' 'Examples: https://api.example.com/v1   or   https://gateway.example.com')"
+        printf '  %s\n' "$(L '公网中转建议使用 HTTPS；HTTP 只适合你明确知道的内网/本机服务。输入 0 可取消。' 'Use HTTPS for public relays; HTTP is appropriate only for trusted local/private services. Enter 0 to cancel.')"
+        printf '\n%s' "$(L 'Base URL: ' 'Base URL: ')"
+        IFS= read -r url
+
+        [[ "$url" == "0" ]] && { ui_info "$(L '已取消添加中转站。' 'Provider creation cancelled.')"; return; }
+        if [[ ! "$url" =~ ^https?:// ]]; then
+            ui_warn "$(L '地址必须以 http:// 或 https:// 开头。' 'The URL must start with http:// or https://.')"
+            continue
+        fi
+        break
+    done
+
+    while true; do
+        ui_section "$(L '步骤 3/4 · 默认模型' 'STEP 3/4 · DEFAULT MODEL')"
+        printf '  %s\n' "$(L '填写服务商实际支持的模型 ID；Codex 会把这个值原样发送给中转站。' 'Enter a model ID actually supported by the provider; Codex sends this value to the relay as-is.')"
+        printf '  %s\n' "$(L '示例: gpt-5.5、gpt-5.6-sol。具体可用名称以服务商控制台/文档为准。' 'Examples: gpt-5.5, gpt-5.6-sol. Use the exact model name documented by your provider.')"
+        printf '  %s\n' "$(L '模型填错通常会在启动后返回 model_not_found / unsupported_model，而不是网络错误。输入 0 可取消。' 'An invalid model usually causes model_not_found / unsupported_model after launch, not a network error. Enter 0 to cancel.')"
+        printf '\n%s' "$(L '默认模型: ' 'Default model: ')"
+        IFS= read -r model
+
+        [[ "$model" == "0" ]] && { ui_info "$(L '已取消添加中转站。' 'Provider creation cancelled.')"; return; }
+        if [[ -z "$model" ]]; then
+            ui_warn "$(L '默认模型不能为空。' 'Default model cannot be empty.')"
+            continue
+        fi
+        break
+    done
+
+    while true; do
+        ui_section "$(L '步骤 4/4 · Provider ID' 'STEP 4/4 · PROVIDER ID')"
+        printf '  %s\n' "$(L '这是写入 ~/.codex/config.toml 中 [model_providers.<ID>] 的标识符。' 'This becomes the identifier in ~/.codex/config.toml under [model_providers.<ID>].')"
+        printf '  %s\n' "$(L "如果服务商没有明确要求特殊 ID，直接按 Enter 使用 \"$name\" 即可。" "If the provider does not require a special ID, press Enter to use \"$name\".")"
+        printf '  %s\n' "$(L '它不是 API Key，也不是模型名。允许字母、数字、下划线、短横线。' 'This is not the API key or model name. Letters, numbers, underscore, and hyphen are allowed.')"
+        printf '\n%s' "Provider ID [$name]: "
+        IFS= read -r provider
+        provider="${provider:-$name}"
+
+        if [[ ! "$provider" =~ ^[A-Za-z0-9_-]+$ ]]; then
+            ui_warn "$(L 'Provider ID 格式非法。' 'Invalid Provider ID.')"
+            continue
+        fi
+        break
+    done
+
+    clear || true
+    ui_header "$(L '确认中转站配置' 'REVIEW PROVIDER')"
+    ui_section "$(L '即将保存' 'CONFIGURATION')"
+    ui_kv "$(L '名称' 'name')" "$name"
+    ui_kv "Provider ID" "$provider"
+    ui_kv "$(L '默认模型' 'model')" "$model"
+    ui_kv "Base URL" "$url"
+    ui_kv "$(L '认证方式' 'auth')" "$(L '当前用户独立 API Key · Codex 原生 auth.json' 'per-user API key · native Codex auth.json')"
+    [[ "$existing" == "1" ]] && ui_warn "$(L '这是覆盖现有自定义中转站的操作。' 'This will replace an existing custom provider definition.')"
+
+    printf '\n%s' "$(L '确认保存？输入 YES 或“确认”；其他输入取消: ' 'Save this provider? Type YES or confirm; anything else cancels: ')"
+    IFS= read -r confirm
+    case "$confirm" in
+        YES|yes|Yes|确认|confirm|CONFIRM) ;;
+        *) ui_info "$(L '已取消，没有写入配置。' 'Cancelled; no configuration was written.')"; return ;;
     esac
-    printf '%s: ' "$(L 'API 地址' 'Base URL')"; read -r url
-    printf '%s: ' "$(L '默认模型' 'Default model')"; read -r model
-    printf '%s [%s]: ' "Provider ID" "$name"; read -r provider
-    provider="${provider:-$name}"
+
     cmd_add "$name" "$url" "$model" "$provider" relay
-    printf '%s [Y/n]: ' "$(L '现在设置 API Key？' 'Set API key now?')"; read -r yn
+
+    printf '\n'
+    ui_ok "$(L "已创建中转站: $name" "Provider created: $name")"
+    ui_info "$(L 'API Key 会单独保存在当前用户 ~/.codex-relay/secrets/，不会写入 config.toml。' 'The API key is stored separately under the current user’s ~/.codex-relay/secrets/ and is not written to config.toml.')"
+
+    printf '\n%s' "$(L '现在设置 API Key？[Y/n]: ' 'Set the API key now? [Y/n]: ')"
+    IFS= read -r yn
     case "$yn" in
-        n|N) ;;
-        *) cmd_key set "$name" ;;
+        n|N)
+            ui_info "$(L "稍后可执行: cr key set $name" "You can set it later with: cr key set $name")"
+            ;;
+        *)
+            cmd_key set "$name"
+            ;;
     esac
+
+    printf '\n'
+    ui_section "$(L '下一步' 'NEXT STEPS')"
+    printf '  %s\n' "$(L "查看网络:      cr check $name" "Check network:   cr check $name")"
+    printf '  %s\n' "$(L "仅切换配置:    cr use $name" "Use config only: cr use $name")"
+    printf '  %s\n' "$(L "切换并启动:    cr switch $name" "Switch & launch: cr switch $name")"
+    printf '  %s\n' "$(L "进入详情页:    cr → 选择 $name" "Open details:    cr → select $name")"
 }
 
 provider_cached_network() {
