@@ -1127,6 +1127,77 @@ cmd_add_interactive() {
     esac
 }
 
+provider_cached_network() {
+    local name="$1" file value=""
+    file="$CACHE_DIR/network-$name.txt"
+    if [[ -s "$file" ]]; then
+        IFS= read -r value < "$file" || true
+        printf '%s' "${value:-?}"
+    else
+        printf '%s' "$(L '未检测' 'not checked')"
+    fi
+}
+
+provider_host() {
+    local url="$1" host
+    host="${url#*://}"
+    host="${host%%/*}"
+    host="${host##*@}"
+    printf '%s' "$host"
+}
+
+provider_key_badge() {
+    local name="$1"
+    load_profile "$name"
+    if [[ "$P_AUTH" == "relay" ]]; then
+        if relay_key_exists "$name"; then
+            printf '%s✓ KEY%s' "$UI_GREEN" "$UI_RESET"
+        else
+            printf '%s✕ KEY%s' "$UI_RED" "$UI_RESET"
+        fi
+    else
+        printf '%sCODEX AUTH%s' "$UI_CYAN" "$UI_RESET"
+    fi
+}
+
+provider_type_badge() {
+    local name="$1"
+    case "$name" in
+        nova|baibai) printf '%sBUILT-IN%s' "$UI_PURPLE" "$UI_RESET" ;;
+        official) printf '%sOFFICIAL%s' "$UI_CYAN" "$UI_RESET" ;;
+        *) printf '%sCUSTOM%s' "$UI_YELLOW" "$UI_RESET" ;;
+    esac
+}
+
+provider_card() {
+    local idx="$1" name="$2" active="$3"
+    local title status host network key_badge type_badge model_line
+
+    load_profile "$name"
+    title="${name^^}"
+    host="$(provider_host "$P_URL")"
+    network="$(provider_cached_network "$name")"
+    key_badge="$(provider_key_badge "$name")"
+    type_badge="$(provider_type_badge "$name")"
+    model_line="$P_MODEL"
+    [[ -n "$P_REASONING" ]] && model_line="$model_line · $P_REASONING"
+
+    if [[ "$name" == "$active" ]]; then
+        status="${UI_GREEN}● ACTIVE${UI_RESET}"
+    else
+        status="${UI_DIM}○ STANDBY${UI_RESET}"
+    fi
+
+    printf '\n  %s[%s]%s  %s%s%s  %b  %b\n' \
+        "$UI_CYAN" "$idx" "$UI_RESET" \
+        "$UI_BOLD$UI_WHITE" "$title" "$UI_RESET" \
+        "$status" "$type_badge"
+    printf '       %s├─ model%s    %s\n' "$UI_DIM" "$UI_RESET" "$model_line"
+    printf '       %s└─ route%s    %s  %b  %sNET%s %s\n' \
+        "$UI_DIM" "$UI_RESET" "$host" "$key_badge" \
+        "$UI_BLUE" "$UI_RESET" "$network"
+}
+
 cmd_provider_detail() {
     local name="$1" choice v key_state
     while true; do
