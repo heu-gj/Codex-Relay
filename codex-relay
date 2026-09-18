@@ -2579,6 +2579,26 @@ dashboard_refresh() {
     ui_ok "$(L 'Dashboard 状态已刷新' 'Dashboard status refreshed')"
 }
 
+cmd_repair_history_auto() {
+    clear || true
+    ui_header "$(L '一键修复聊天历史' 'ONE-CLICK HISTORY REPAIR')"
+
+    if [[ "$(codex_process_count)" != "0" ]]; then
+        ui_warn "$(L '检测到当前用户仍有 Codex 服务/进程。将自动停止它们后继续修复聊天历史。' 'Codex services/processes are running for this user. They will be stopped automatically before history repair continues.')"
+        printf '\n'
+        if ! cmd_stop; then
+            ui_fail "$(L 'Codex 未能完全停止，已取消历史修复。' 'Codex could not be fully stopped; history repair was cancelled.')"
+            return 1
+        fi
+        printf '\n'
+    else
+        ui_ok "$(L '当前用户没有运行中的 Codex，可以直接修复。' 'No Codex processes are running for this user; repair can proceed.')"
+        printf '\n'
+    fi
+
+    cmd_repair_history
+}
+
 cmd_menu_history() {
     local choice keyword
     while true; do
@@ -2591,7 +2611,7 @@ cmd_menu_history() {
         ui_menu_item "5" "$(L '健康检查' 'Health check')" "sessions · SQLite · index"
         ui_menu_item "6" "$(L '备份聊天历史' 'Backup history')" ""
         ui_menu_item "7" "$(L '重建索引' 'Rebuild index')" "$(L '要求先停止 Codex' 'Codex must be stopped')"
-        ui_menu_item "8" "$(L '一键修复历史' 'One-click repair')" "backup → repair → reindex"
+        ui_menu_item "8" "$(L '一键修复历史' 'One-click repair')" "$(L '自动停止 Codex → backup → repair → reindex' 'auto-stop Codex → backup → repair → reindex')"
         ui_menu_item "0" "$(L '返回' 'Back')" ""
         printf '\n> '; read -r choice
         case "$choice" in
@@ -2606,7 +2626,7 @@ cmd_menu_history() {
             5) clear || true; cmd_health; ui_pause ;;
             6) clear || true; cmd_backup; ui_pause ;;
             7) clear || true; cmd_reindex || true; ui_pause ;;
-            8) clear || true; cmd_repair_history || true; ui_pause ;;
+            8) cmd_repair_history_auto || true; ui_pause ;;
             0|q|Q) return ;;
             *) ui_warn "$(L '无效选择' 'Invalid choice')"; sleep 0.5 ;;
         esac
