@@ -492,6 +492,8 @@ userC: Nova → 另一个兼容 endpoint
 ```bash
 cr list
 cr status
+cr services
+cr stop
 cr use NAME
 cr switch NAME
 cr model PROFILE MODEL
@@ -511,6 +513,55 @@ cr show-config
 `cr use` / `cr switch` 都使用同一套 `CODEX_HOME`，不会创建第二套 `~/.codex`。
 
 > 正在运行的 Codex 进程不会热加载新的 provider / endpoint / API Key。切换中转站时仍然需要结束当前 Codex 进程并启动新的进程，但 `cr switch PROFILE` 已经把重新配置和重新加载 Key 自动化。
+
+## 当前用户 Codex 服务管理
+
+查看当前 Linux 用户正在运行的 Codex 进程：
+
+```bash
+cr services
+```
+
+一键停止当前用户全部 Codex 服务和进程：
+
+```bash
+cr stop
+```
+
+`cr stop` 只处理当前用户，不使用 sudo，也不会停止其他 Linux 用户的 Codex。它会：
+
+1. 先调用 Codex 官方命令：
+
+   ```bash
+   codex app-server daemon stop
+   ```
+
+2. 再扫描当前用户残留的 `codex` / `codex-*` 进程。
+3. 对残留进程发送 `TERM`，短暂等待退出。
+4. 对仍未退出的 Codex 进程发送 `KILL`。
+5. 最后再次确认当前用户已经没有 Codex 进程。
+
+> `cr stop` 会中断当前用户正在运行或排队的 Codex 工作。执行前确认没有需要保留的活跃任务。
+
+如果只是想停止官方托管的 app-server daemon，可以直接使用：
+
+```bash
+codex app-server daemon stop
+```
+
+如果准备修改聊天数据库、重建索引或做一键历史修复，推荐先执行：
+
+```bash
+cr stop
+```
+
+`cr reindex` 和 `cr repair-history` 现在也会检查当前用户是否仍有 Codex 进程；如果有，会直接提示：
+
+```text
+请先执行: cr stop
+```
+
+完整控制中心 `cr menu` 中也提供 **[17] 停止当前用户全部 Codex**。
 
 ## 无 VPN / 无代理直连
 
@@ -620,14 +671,20 @@ cr backup
 仅重建索引：
 
 ```bash
+cr stop
 cr reindex
 ```
+
+`cr reindex` 会修改 Codex 本地索引，因此要求当前用户没有运行中的 Codex 进程。
 
 一键恢复：
 
 ```bash
+cr stop
 cr repair-history
 ```
+
+如果忘记先停止，`cr repair-history` 会检测并提示运行 `cr stop`。
 
 `repair-history` 会先备份，然后保守修复：
 
