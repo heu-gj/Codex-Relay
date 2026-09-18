@@ -1648,52 +1648,103 @@ print("installed:", new_ip, host)
 PY
 }
 
+diagnostic_row() {
+    local kind="$1" label="$2" value="$3"
+    case "$kind" in
+        ok)
+            printf '  %s[✓]%s %-18s %s\n' "$UI_GREEN" "$UI_RESET" "$label" "$value"
+            ;;
+        warn)
+            printf '  %s[!]%s %-18s %s\n' "$UI_YELLOW" "$UI_RESET" "$label" "$value"
+            ;;
+        fail)
+            printf '  %s[✕]%s %-18s %s\n' "$UI_RED" "$UI_RESET" "$label" "$value"
+            ;;
+        *)
+            printf '  %s[·]%s %-18s %s\n' "$UI_GRAY" "$UI_RESET" "$label" "$value"
+            ;;
+    esac
+}
+
 cmd_check() {
     local name="${1:-$(current_profile)}"
     load_profile "$name"
     need curl
 
-    local host code
-    host="$(url_host "$P_URL")"
+    local host system_ip tcp_ip https_result code sec ms
+    local dns_ok=0 tcp_dns_ok=0 https_ok=0
+    host="$(provider_host "$P_URL")"
 
-    ui_header "NETWORK DIAGNOSTICS"
+    clear || true
+    ui_header "$(L '网络诊断' 'NETWORK DIAGNOSTICS')"
+
+    ui_section "$(L '路由' 'ROUTE')"
     ui_kv "profile" "$name"
     ui_kv "provider" "$P_PROVIDER"
     ui_kv "model" "$P_MODEL"
-    ui_kv "endpoint" "$P_URL"
+    ui_kv "endpoint" "$host"
 
-    ui_section "Proxy environment"
-    if env | grep -iE '^(http|https|all|no)_proxy='; then
-        :
+    ui_section "$(L '检查结果' 'CHECKS')"
+
+    if proxy_env_detected; then
+        diagnostic_row warn "$(L 'Shell Proxy' 'Shell Proxy')" "$(L 'DETECTED · Codex 启动时会绕过' 'DETECTED · bypassed on Codex launch')"
     else
-        ui_ok "没有检测到代理环境变量"
+        diagnostic_row ok "$(L 'Shell Proxy' 'Shell Proxy')" "CLEAN"
     fi
 
-    ui_section "System resolver"
-    if timeout 6 getent ahostsv4 "$host"; then
-        ui_ok "系统 resolver 有响应"
+    system_ip="$(timeout 4 getent ahostsv4 "$host" 2>/dev/null | awk 'NR==1 {print $1}' || true)"
+    if [[ -n "$system_ip" ]]; then
+        dns_ok=1
+        diagnostic_row ok "$(L 'System DNS' 'System DNS')" "$system_ip"
     else
-        ui_warn "系统 resolver 未能及时返回 IPv4 地址"
+        diagnostic_row fail "$(L 'System DNS' 'System DNS')" "$(L '无 IPv4 响应' 'no IPv4 response')"
     fi
 
-    ui_section "TCP DNS / 8.8.8.8"
     if command -v dig >/dev/null 2>&1; then
-        if dig +tcp +time=4 +tries=1 @8.8.8.8 "$host" A +short; then
-            :
+        tcp_ip="$(timeout 6 dig +tcp +time=3 +tries=1 @8.8.8.8 "$host" A +short 2>/dev/null | awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {print; exit}' || true)"
+        if [[ -n "$tcp_ip" ]]; then
+            tcp_dns_ok=1
+            diagnostic_row ok "$(L 'TCP DNS' 'TCP DNS')" "$tcp_ip"
         else
-            ui_warn "TCP DNS 查询失败"
+            diagnostic_row fail "$(L 'TCP DNS' 'TCP DNS')" "$(L '查询失败' 'query failed')"
         fi
     else
-        ui_warn "未安装 dig；可执行 sudo apt install dnsutils"
+        diagnostic_row warn "$(L 'TCP DNS' 'TCP DNS')" "$(L '未安装 dig' 'dig not installed')"
     fi
 
-    ui_section "Direct HTTPS / no proxy"
-    if code="$(direct_curl "$P_URL")"; then
-        ui_ok "直连成功 · HTTP $code"
+    https_result="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u all_proxy -u ALL_PROXY \
+        curl --noproxy '*' -4 -sS -o /dev/null -w '%{http_code} %{time_total}' \
+        --connect-timeout 4 --max-time 8 "$P_URL" 2>/dev/null || true)"
+
+    code="${https_result%% *}"
+    sec="${https_result#* }"
+    if [[ -n "$https_result" && "$code" != "000" ]]; then
+        https_ok=1
+        ms="$(awk -v t="$sec" 'BEGIN{printf "%.0f",t*1000}')"
+        diagnostic_row ok "$(L 'Direct HTTPS' 'Direct HTTPS')" "HTTP $code · ${ms} ms"
+        printf '✓ Direct · %s ms\n' "$ms" > "$CACHE_DIR/network-$name.txt"
+    else
+        diagnostic_row fail "$(L 'Direct HTTPS' 'Direct HTTPS')" "$(L '连接失败' 'connection failed')"
+        printf '✕ Unreachable\n' > "$CACHE_DIR/network-$name.txt"
+    fi
+
+    ui_section "$(L '结论' 'STATUS')"
+    if (( https_ok )); then
+        printf '  %s%s✓ NETWORK READY%s\n' "$UI_BOLD" "$UI_GREEN" "$UI_RESET"
+        if (( ! dns_ok && tcp_dns_ok )); then
+            ui_warn "$(L '系统 DNS 异常，但 TCP DNS 正常；可运行 cr direct 修复直连解析。' 'System DNS failed while TCP DNS works; run cr direct to repair direct resolution.')"
+        fi
         return 0
     fi
 
-    ui_fail "当前无法直接访问 $host"
+    printf '  %s%s✕ NETWORK CHECK REQUIRED%s\n' "$UI_BOLD" "$UI_RED" "$UI_RESET"
+    if (( tcp_dns_ok )); then
+        ui_info "$(L "TCP DNS 能解析 $host，可尝试: cr direct $name" "TCP DNS resolves $host; try: cr direct $name")"
+    elif (( dns_ok )); then
+        ui_info "$(L 'DNS 有响应但 HTTPS 失败，请检查 TLS、出口网络或服务端状态。' 'DNS works but HTTPS failed; inspect TLS, egress networking, or provider status.')"
+    else
+        ui_info "$(L 'DNS 与 HTTPS 都失败，请先检查服务器网络或 DNS。' 'Both DNS and HTTPS failed; check server networking or DNS first.')"
+    fi
     return 1
 }
 
