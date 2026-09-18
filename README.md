@@ -710,14 +710,30 @@ cr reindex
 
 `cr reindex` 会修改 Codex 本地索引，因此要求当前用户没有运行中的 Codex 进程。
 
-一键恢复：
+一键恢复有两种方式。
+
+在 `cr menu → [2] 聊天历史 → [8] 一键修复历史` 中，Relay 会先检查当前用户的 Codex 服务；如果仍在运行，会自动执行当前用户级停止流程，确认全部停止后继续：
+
+```text
+自动停止 Codex
+    ↓
+备份
+    ↓
+修复 SQLite / thread 元数据
+    ↓
+重建索引
+    ↓
+健康检查
+```
+
+如果自动停止失败，会取消修复，不会继续写数据库。
+
+命令行 `cr repair-history` 仍保持保守行为，不会自动中断正在运行的 Codex。使用命令行时请先执行：
 
 ```bash
 cr stop
 cr repair-history
 ```
-
-如果忘记先停止，`cr repair-history` 会检测并提示运行 `cr stop`。
 
 `repair-history` 会先备份，然后保守修复：
 
