@@ -578,6 +578,43 @@ PY
 }
 
 # -----------------------------
+# 每用户 Provider 覆盖
+# -----------------------------
+profile_override_file() {
+    printf '%s/%s.conf' "$OVERRIDES_DIR" "$1"
+}
+
+profile_override_exists() {
+    [[ -s "$(profile_override_file "$1")" ]]
+}
+
+save_profile_override() {
+    local name="$1" url="$2" model="$3" reasoning="$4" review="$5" file tmp
+    [[ -n "$reasoning" ]] || reasoning="__EMPTY__"
+    [[ -n "$review" ]] || review="__EMPTY__"
+    file="$(profile_override_file "$name")"
+    tmp="$(mktemp "$OVERRIDES_DIR/.override.XXXXXX")"
+    {
+        printf 'url=%s\n' "$url"
+        printf 'model=%s\n' "$model"
+        printf 'reasoning=%s\n' "$reasoning"
+        printf 'review=%s\n' "$review"
+    } > "$tmp"
+    mv "$tmp" "$file"
+    chmod 600 "$file" 2>/dev/null || true
+}
+
+reset_profile_override() {
+    rm -f "$(profile_override_file "$1")"
+}
+
+profile_names() {
+    printf '%s\n' nova baibai
+    [[ -s "$OFFICIAL_MODEL_FILE" ]] && printf '%s\n' official
+    awk -F '\t' 'NF && $1!="nova" && $1!="baibai" && $1!="official" && !seen[$1]++ {print $1}' "$REGISTRY"
+}
+
+# -----------------------------
 # 每用户 / 每 Profile API Key
 # -----------------------------
 key_file_for_profile() {
