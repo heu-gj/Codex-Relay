@@ -71,7 +71,6 @@ codex_process_pids() {
     for proc in /proc/[0-9]*; do
         [[ -d "$proc" ]] || continue
         pid="${proc##*/}"
-        [[ "$pid" == "$" ]] && continue
 
         [[ "$(stat -c '%u' "$proc" 2>/dev/null || true)" == "$uid" ]] || continue
 
