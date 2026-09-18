@@ -15,11 +15,12 @@ SECRETS_DIR="$RELAY_DIR/secrets"
 AUTH_DIR="$RELAY_DIR/auth"
 OFFICIAL_AUTH_FILE="$AUTH_DIR/official.json"
 AUTH_RELOAD_FLAG="$AUTH_DIR/reload-needed"
+CACHE_DIR="$RELAY_DIR/cache"
 OVERRIDES_DIR="$RELAY_DIR/overrides"
 HOSTS_TAG="codex-relay-manager"
 
-mkdir -p "$CODEX_DIR" "$RELAY_DIR" "$RELAY_DIR/backups/config" "$RELAY_DIR/backups/auth" "$RELAY_DIR/backups/history" "$SECRETS_DIR" "$AUTH_DIR" "$OVERRIDES_DIR"
-chmod 700 "$RELAY_DIR" "$SECRETS_DIR" "$AUTH_DIR" "$OVERRIDES_DIR" 2>/dev/null || true
+mkdir -p "$CODEX_DIR" "$RELAY_DIR" "$RELAY_DIR/backups/config" "$RELAY_DIR/backups/auth" "$RELAY_DIR/backups/history" "$SECRETS_DIR" "$AUTH_DIR" "$CACHE_DIR" "$OVERRIDES_DIR"
+chmod 700 "$RELAY_DIR" "$SECRETS_DIR" "$AUTH_DIR" "$CACHE_DIR" "$OVERRIDES_DIR" 2>/dev/null || true
 
 # 从旧版 ~/.codex 中迁移少量 relay 状态文件。只迁移管理器自己的文件，
 # 不触碰 auth.json、sessions、SQLite 或其他 Codex 数据。
