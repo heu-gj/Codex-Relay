@@ -962,6 +962,221 @@ refresh_daemon_after_auth_change() {
 }
 
 # -----------------------------
+# 官方 Codex 额度 / Usage
+# -----------------------------
+cache_fresh() {
+    local file="$1" ttl="$2" now mtime
+    [[ -f "$file" ]] || return 1
+    now="$(date +%s)"
+    mtime="$(stat -c '%Y' "$file" 2>/dev/null || echo 0)"
+    (( now - mtime < ttl ))
+}
+
+official_auth_source() {
+    local mode=""
+    if [[ -f "$AUTH_FILE" ]]; then
+        mode="$(auth_json_mode || true)"
+        case "$mode" in
+            chatgpt|chatgptauthtokens)
+                printf '%s\n' "$AUTH_FILE"
+                return 0
+                ;;
+        esac
+    fi
+    [[ -f "$OFFICIAL_AUTH_FILE" ]] || return 1
+    printf '%s\n' "$OFFICIAL_AUTH_FILE"
+}
+
+refresh_official_quota_cache() {
+    local source cache
+    source="$(official_auth_source || true)"
+    [[ -n "$source" ]] || return 1
+    cache="$CACHE_DIR/official-quota.json"
+
+    python3 - "$source" "$cache" <<'PY'
+import json
+import sys
+from pathlib import Path
+from urllib.request import Request, build_opener, ProxyHandler
+from urllib.error import HTTPError, URLError
+
+auth_path = Path(sys.argv[1])
+cache_path = Path(sys.argv[2])
+
+try:
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+
+tokens = auth.get("tokens") or {}
+access_token = tokens.get("access_token") or auth.get("access_token")
+account_id = tokens.get("account_id") or auth.get("account_id")
+if not access_token:
+    raise SystemExit(1)
+
+headers = {
+    "Authorization": f"Bearer {access_token}",
+    "Accept": "application/json",
+    "User-Agent": "Codex-Relay/usage",
+}
+if account_id:
+    headers["ChatGPT-Account-Id"] = account_id
+
+req = Request("https://chatgpt.com/backend-api/codex/usage", headers=headers)
+opener = build_opener(ProxyHandler({}))
+
+try:
+    with opener.open(req, timeout=5) as resp:
+        data = json.load(resp)
+except (HTTPError, URLError, TimeoutError, ValueError):
+    raise SystemExit(1)
+
+rate = data.get("rate_limit") or {}
+windows = []
+
+def label_for(seconds, fallback):
+    try:
+        seconds = int(seconds)
+    except Exception:
+        return fallback
+    if 16200 <= seconds <= 19800:
+        return "5h"
+    if 576000 <= seconds <= 691200:
+        return "7d"
+    if 82800 <= seconds <= 90000:
+        return "1d"
+    if seconds > 0 and seconds % 3600 == 0:
+        return f"{seconds // 3600}h"
+    return fallback
+
+for key, fallback in (("primary_window", "primary"), ("secondary_window", "secondary")):
+    w = rate.get(key)
+    if not isinstance(w, dict):
+        continue
+    used = w.get("used_percent")
+    try:
+        remaining = max(0, min(100, round(100 - float(used))))
+    except Exception:
+        remaining = None
+    windows.append({
+        "label": label_for(w.get("limit_window_seconds"), fallback),
+        "remaining_percent": remaining,
+        "reset_at": w.get("reset_at"),
+    })
+
+credits = data.get("credits") or {}
+reset_credits = data.get("rate_limit_reset_credits") or {}
+normalized = {
+    "plan": data.get("plan_type"),
+    "allowed": rate.get("allowed"),
+    "limit_reached": rate.get("limit_reached"),
+    "windows": windows,
+    "credits_balance": credits.get("balance"),
+    "credits_unlimited": credits.get("unlimited"),
+    "reset_credits": reset_credits.get("available_count"),
+}
+cache_path.write_text(json.dumps(normalized, ensure_ascii=False) + "\n", encoding="utf-8")
+PY
+}
+
+official_quota_summary() {
+    local cache="$CACHE_DIR/official-quota.json"
+    if ! cache_fresh "$cache" 60; then
+        refresh_official_quota_cache >/dev/null 2>&1 || true
+    fi
+    [[ -s "$cache" ]] || {
+        printf '%s' "N/A"
+        return 0
+    }
+
+    python3 - "$cache" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    print("N/A")
+    raise SystemExit
+
+parts = []
+for w in data.get("windows") or []:
+    p = w.get("remaining_percent")
+    if p is not None:
+        parts.append(f"{w.get('label','?')} {p}%")
+
+if data.get("credits_unlimited") is True:
+    parts.append("credits ∞")
+elif data.get("credits_balance") not in (None, ""):
+    parts.append(f"credits {data['credits_balance']}")
+
+print(" · ".join(parts) if parts else "N/A")
+PY
+}
+
+cmd_quota() {
+    local force="${1:-}"
+    local cache="$CACHE_DIR/official-quota.json"
+    if [[ "$force" == "--refresh" || "$force" == "-r" ]]; then
+        rm -f "$cache"
+    fi
+
+    if ! cache_fresh "$cache" 60; then
+        refresh_official_quota_cache >/dev/null 2>&1 || true
+    fi
+
+    ui_header "$(L '官方 CODEX 额度' 'OFFICIAL CODEX USAGE')"
+    if [[ ! -s "$cache" ]]; then
+        ui_warn "$(L '无法读取官方 Codex 额度。需要保存过官方 ChatGPT 登录，并且 chatgpt.com 可访问。' 'Official Codex usage is unavailable. A saved ChatGPT login and chatgpt.com connectivity are required.')"
+        return 1
+    fi
+
+    python3 - "$cache" "$RELAY_LANG" <<'PY'
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+lang = sys.argv[2]
+
+plan = data.get("plan") or "?"
+print(f"  {'套餐' if lang == 'zh' else 'plan':<12} {plan}")
+
+for w in data.get("windows") or []:
+    p = w.get("remaining_percent")
+    reset = w.get("reset_at")
+    if reset:
+        try:
+            reset_text = datetime.fromtimestamp(int(reset)).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            reset_text = "?"
+    else:
+        reset_text = "?"
+    left = f"{p}%" if p is not None else "?"
+    name = w.get("label") or "?"
+    print(f"  {name:<12} {left} {'剩余' if lang == 'zh' else 'left'} · {'重置' if lang == 'zh' else 'reset'} {reset_text}")
+
+if data.get("credits_unlimited") is True:
+    credits = "∞"
+else:
+    credits = data.get("credits_balance")
+if credits not in (None, ""):
+    print(f"  {'Credits':<12} {credits}")
+
+rc = data.get("reset_credits")
+if rc is not None:
+    print(f"  {'重置券' if lang == 'zh' else 'reset credits':<12} {rc}")
+
+allowed = data.get("allowed")
+if allowed is not None:
+    status = "OK" if allowed else ("不可用" if lang == "zh" else "blocked")
+    print(f"  {'状态' if lang == 'zh' else 'status':<12} {status}")
+PY
+}
+
+# -----------------------------
 # 每用户 / 每 Profile API Key
 # -----------------------------
 key_file_for_profile() {
