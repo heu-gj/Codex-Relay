@@ -3137,7 +3137,14 @@ refresh_dashboard_network() {
 
     result="$(provider_reachability_probe "$name" || true)"
     if [[ -n "$result" ]]; then
-        IFS=
+        IFS=$'\t' read -r probe_kind code sec <<< "$result"
+        ms="$(awk -v t="$sec" 'BEGIN{printf "%.0f",t*1000}')"
+        printf '✓ Codex route · %s ms\n' "$ms" > "$file"
+    else
+        printf '✕ Unreachable\n' > "$file"
+    fi
+}
+
 dashboard_refresh() {
     local name="${1:-$(current_profile)}"
     ui_step "$(L '刷新 CLI 版本…' 'Refreshing CLI version…')"
