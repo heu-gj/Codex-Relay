@@ -1877,7 +1877,20 @@ cmd_check() {
     https_result="$(provider_reachability_probe "$name" || true)"
     if [[ -n "$https_result" ]]; then
         local probe_kind
-        IFS=
+        IFS=$'\t' read -r probe_kind code sec <<< "$https_result"
+        https_ok=1
+        ms="$(awk -v t="$sec" 'BEGIN{printf "%.0f",t*1000}')"
+        if [[ "$probe_kind" == "responses" ]]; then
+            diagnostic_row ok "$(L 'Codex /responses' 'Codex /responses')" "HTTP $code · ${ms} ms"
+        else
+            diagnostic_row ok "$(L 'Base URL' 'Base URL')" "HTTP $code · ${ms} ms"
+        fi
+        printf '✓ Codex route · %s ms\n' "$ms" > "$CACHE_DIR/network-$name.txt"
+    else
+        diagnostic_row fail "$(L 'Codex route' 'Codex route')" "$(L '无代理直连未获得 HTTP 响应' 'no HTTP response over direct no-proxy route')"
+        printf '✕ Unreachable\n' > "$CACHE_DIR/network-$name.txt"
+    fi
+
     ui_section "$(L '结论' 'STATUS')"
     if (( https_ok )); then
         printf '  %s%s✓ NETWORK READY%s\n' "$UI_BOLD" "$UI_GREEN" "$UI_RESET"
