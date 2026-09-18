@@ -236,7 +236,45 @@ hash -r
 cr
 ```
 
-会进入 **中转站管理器**。这里可以查看当前中转站、模型、Key 状态，并进行切换、编辑、测速、添加和删除。
+会进入新版 **Route Switcher / 路由切换器**。主界面使用卡片式布局，直接显示：
+
+```text
+当前路由
+模型 / reasoning
+endpoint
+API Key 状态
+网络缓存状态
+ACTIVE / STANDBY
+BUILT-IN / OFFICIAL / CUSTOM
+```
+
+示意：
+
+```text
+CODEX RELAY // 路由切换器
+
+◆ 当前路由
+  ● BAIBAI
+    gpt-5.6-sol · xhigh  →  api.sharesai.xyz  →  NET ✓ Direct · 168 ms
+
+◆ 可用中转站
+
+  [1]  BAIBAI   ● ACTIVE   BUILT-IN
+       ├─ model    gpt-5.6-sol · xhigh
+       └─ route    api.sharesai.xyz   ✓ KEY   NET ✓ Direct · 168 ms
+
+  [2]  NOVA     ○ STANDBY  BUILT-IN
+       ├─ model    gpt-5.5
+       └─ route    ai.novacode.top    ✓ KEY   NET 未检测
+
+  [Enter] 启动当前 Codex
+  [A]     添加中转站
+  [R]     刷新当前路由网络
+  [M]     打开完整控制中心
+  [0]     退出
+```
+
+主列表不会为了显示网络状态主动测速，只读取缓存，因此打开和返回都保持轻量。按 `R` 时才刷新当前路由的网络状态。
 
 完整控制中心使用：
 
@@ -470,12 +508,28 @@ cr menu
 
 中选择 **[1] 中转站**。
 
-列表会显示当前激活中转站、模型以及 API Key 是否已经配置。进入某个中转站后可以直接：
+进入某个中转站后会打开分区式详情页：
 
-- 切换并启动 Codex
+```text
+ROUTE // BAIBAI
+
+● ACTIVE · 当前路由   BUILT-IN
+
+◆ 路由信息
+◆ 启动
+◆ 配置
+◆ 诊断
+◆ 维护
+```
+
+可以直接：
+
+- 按 Enter 切换并启动 Codex
+- 按 `U` 只切换 config/auth，不启动
 - 修改当前用户的默认模型
 - 修改当前用户的 API 地址
 - 设置 / 更新当前用户自己的 API Key
+- 按 `R` 刷新该中转站网络缓存
 - 无代理 HTTPS 测速
 - DNS / HTTPS 网络诊断
 - 重置当前用户的模型 / endpoint 修改
