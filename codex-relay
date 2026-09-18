@@ -1070,32 +1070,136 @@ cmd_key() {
 }
 
 
-cmd_key_menu() {
+cmd_key_profile_menu() {
+    local name="$1" choice state current confirm
     while true; do
-        clear || true
-        ui_header "$(L 'API KEY 管理' 'API KEY MANAGEMENT')"
-        printf '\n'
-        local p state
-        for p in nova baibai; do
-            if relay_key_exists "$p"; then state="$(L '已设置 ✓' 'SET ✓')"; else state="$(L '未设置' 'NOT SET')"; fi
-            ui_kv "$p" "$state"
-        done
+        load_profile "$name"
+        [[ "$P_AUTH" == "relay" ]] || return
+        current="$(current_profile)"
+        if relay_key_exists "$name"; then
+            state="$(L '✓ KEY SET' '✓ KEY SET')"
+        else
+            state="$(L '✕ NO KEY' '✕ NO KEY')"
+        fi
 
-        printf '\n'
-        ui_menu_item "1" "$(L '设置 / 更新 Nova Key' 'Set / update Nova key')" ""
-        ui_menu_item "2" "$(L '设置 / 更新 baibai Key' 'Set / update baibai key')" ""
-        ui_menu_item "3" "$(L '删除 Nova Key' 'Remove Nova key')" ""
-        ui_menu_item "4" "$(L '删除 baibai Key' 'Remove baibai key')" ""
+        clear || true
+        ui_header "CREDENTIAL // ${name^^}"
+        ui_section "$(L '状态' 'STATUS')"
+        ui_kv "profile" "$name"
+        ui_kv "provider" "$P_PROVIDER"
+        ui_kv "model" "$P_MODEL"
+        ui_kv "API Key" "$state"
+        if [[ "$current" == "$name" ]]; then
+            ui_kv "$(L '路由' 'route')" "$(L '● ACTIVE' '● ACTIVE')"
+        else
+            ui_kv "$(L '路由' 'route')" "$(L '○ STANDBY' '○ STANDBY')"
+        fi
+
+        ui_section "$(L '操作' 'ACTIONS')"
+        ui_menu_item "U" "$(L '设置 / 更新 API Key' 'Set / update API key')" "$(L '输入过程隐藏' 'hidden input')"
+        if relay_key_exists "$name"; then
+            ui_menu_item "D" "$(L '删除 API Key' 'Remove API key')" "$(L '危险操作 · 需要确认' 'destructive · confirmation required')"
+        fi
         ui_menu_item "0" "$(L '返回' 'Back')" ""
-        printf '\n%s›%s %s%s%s  ' "$UI_PINK" "$UI_RESET" "$UI_BOLD" "$(L '请选择操作' 'Choose an action')" "$UI_RESET"
+
+        printf '\n%s›%s ' "$UI_PINK" "$UI_RESET"
         read -r choice
         case "$choice" in
-            1) cmd_key set nova; ui_pause ;;
-            2) cmd_key set baibai; ui_pause ;;
-            3) cmd_key remove nova; ui_pause ;;
-            4) cmd_key remove baibai; ui_pause ;;
-            0|q|Q) return ;;
-            *) ui_warn "$(L "无效选择: $choice" "Invalid choice: $choice")"; sleep 0.7 ;;
+            u|U)
+                cmd_key set "$name"
+                ui_pause
+                ;;
+            d|D)
+                relay_key_exists "$name" || continue
+                clear || true
+                ui_header "$(L '确认删除 API KEY' 'CONFIRM KEY REMOVAL')"
+                ui_warn "$(L "将删除当前用户保存的 $name API Key。" "This removes the saved $name API key for the current user.")"
+                if [[ "$current" == "$name" ]]; then
+                    ui_warn "$(L '该中转站当前正在使用；删除后会自动停止当前用户 Codex。' 'This provider is active; removing its key will stop current-user Codex automatically.')"
+                fi
+                printf '\n%s' "$(L '输入 DELETE 或“删除”确认: ' 'Type DELETE or remove to confirm: ')"
+                IFS= read -r confirm
+                case "$confirm" in
+                    DELETE|delete|删除|remove|REMOVE)
+                        cmd_key remove "$name"
+                        ;;
+                    *)
+                        ui_info "$(L '已取消，没有删除 API Key。' 'Cancelled. API key was not removed.')"
+                        ;;
+                esac
+                ui_pause
+                ;;
+            0|q|Q)
+                return
+                ;;
+            *)
+                ui_warn "$(L '无效选择' 'Invalid choice')"
+                sleep 0.5
+                ;;
+        esac
+    done
+}
+
+cmd_key_menu() {
+    local -a profiles=()
+    local p choice i state active mark
+    while true; do
+        profiles=()
+        while IFS= read -r p; do
+            [[ -n "$p" ]] || continue
+            load_profile "$p"
+            [[ "$P_AUTH" == "relay" ]] && profiles+=("$p")
+        done < <(profile_names)
+
+        active="$(current_profile)"
+        clear || true
+        ui_header "$(L '凭据管理' 'CREDENTIALS')"
+
+        ui_section "$(L '当前用户 API Keys' 'CURRENT USER API KEYS')"
+        if (( ${#profiles[@]} == 0 )); then
+            ui_info "$(L '没有 relay 类型的中转站。' 'No relay-managed providers found.')"
+        else
+            i=1
+            for p in "${profiles[@]}"; do
+                if relay_key_exists "$p"; then
+                    state="${UI_GREEN}✓ KEY SET${UI_RESET}"
+                else
+                    state="${UI_RED}✕ NO KEY${UI_RESET}"
+                fi
+                if [[ "$p" == "$active" ]]; then
+                    mark="${UI_GREEN}● ACTIVE${UI_RESET}"
+                else
+                    mark="${UI_DIM}○ STANDBY${UI_RESET}"
+                fi
+                printf '\n  %s[%s]%s  %s%-14s%s %b  %b\n' \
+                    "$UI_CYAN" "$i" "$UI_RESET" \
+                    "$UI_BOLD$UI_WHITE" "${p^^}" "$UI_RESET" \
+                    "$state" "$mark"
+                load_profile "$p"
+                printf '       %s└─%s %s · %s\n' "$UI_DIM" "$UI_RESET" "$P_MODEL" "$(provider_host "$P_URL")"
+                i=$((i+1))
+            done
+        fi
+
+        printf '\n'
+        ui_rule
+        ui_info "$(L 'Key 只保存在当前用户 ~/.codex-relay/secrets/；不会写入 config.toml。' 'Keys stay in the current user’s ~/.codex-relay/secrets/ and are never written to config.toml.')"
+        ui_menu_item "0" "$(L '返回' 'Back')" ""
+        printf '\n%s›%s ' "$UI_PINK" "$UI_RESET"
+        read -r choice
+
+        case "$choice" in
+            0|q|Q)
+                return
+                ;;
+            *)
+                if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#profiles[@]} )); then
+                    cmd_key_profile_menu "${profiles[$((choice-1))]}"
+                else
+                    ui_warn "$(L '无效选择' 'Invalid choice')"
+                    sleep 0.5
+                fi
+                ;;
         esac
     done
 }
