@@ -962,241 +962,6 @@ refresh_daemon_after_auth_change() {
 }
 
 # -----------------------------
-# 官方 Codex 额度 / Usage
-# -----------------------------
-cache_fresh() {
-    local file="$1" ttl="$2" now mtime
-    [[ -f "$file" ]] || return 1
-    now="$(date +%s)"
-    mtime="$(stat -c '%Y' "$file" 2>/dev/null || echo 0)"
-    (( now - mtime < ttl ))
-}
-
-official_auth_source() {
-    local mode=""
-    if [[ -f "$AUTH_FILE" ]]; then
-        mode="$(auth_json_mode || true)"
-        case "$mode" in
-            chatgpt|chatgptauthtokens)
-                printf '%s\n' "$AUTH_FILE"
-                return 0
-                ;;
-            apikey)
-                ;;
-            *)
-                if python3 - "$AUTH_FILE" <<'PY' >/dev/null 2>&1
-import json
-import sys
-from pathlib import Path
-try:
-    data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-except Exception:
-    raise SystemExit(1)
-tokens = data.get("tokens") or {}
-raise SystemExit(0 if tokens.get("access_token") else 1)
-PY
-                then
-                    printf '%s\n' "$AUTH_FILE"
-                    return 0
-                fi
-                ;;
-        esac
-    fi
-    [[ -f "$OFFICIAL_AUTH_FILE" ]] || return 1
-    printf '%s\n' "$OFFICIAL_AUTH_FILE"
-}
-
-refresh_official_quota_cache() {
-    local source cache
-    source="$(official_auth_source || true)"
-    [[ -n "$source" ]] || return 1
-    cache="$CACHE_DIR/official-quota.json"
-
-    python3 - "$source" "$cache" <<'PY'
-import json
-import sys
-from pathlib import Path
-from urllib.request import Request, build_opener, ProxyHandler
-from urllib.error import HTTPError, URLError
-
-auth_path = Path(sys.argv[1])
-cache_path = Path(sys.argv[2])
-
-try:
-    auth = json.loads(auth_path.read_text(encoding="utf-8"))
-except Exception:
-    raise SystemExit(1)
-
-tokens = auth.get("tokens") or {}
-access_token = tokens.get("access_token") or auth.get("access_token")
-account_id = tokens.get("account_id") or auth.get("account_id")
-if not access_token:
-    raise SystemExit(1)
-
-headers = {
-    "Authorization": f"Bearer {access_token}",
-    "Accept": "application/json",
-    "User-Agent": "Codex-Relay/usage",
-}
-if account_id:
-    headers["ChatGPT-Account-Id"] = account_id
-
-req = Request("https://chatgpt.com/backend-api/codex/usage", headers=headers)
-opener = build_opener(ProxyHandler({}))
-
-try:
-    with opener.open(req, timeout=5) as resp:
-        data = json.load(resp)
-except (HTTPError, URLError, TimeoutError, ValueError):
-    raise SystemExit(1)
-
-rate = data.get("rate_limit") or {}
-windows = []
-
-def label_for(seconds, fallback):
-    try:
-        seconds = int(seconds)
-    except Exception:
-        return fallback
-    if 16200 <= seconds <= 19800:
-        return "5h"
-    if 576000 <= seconds <= 691200:
-        return "7d"
-    if 82800 <= seconds <= 90000:
-        return "1d"
-    if seconds > 0 and seconds % 3600 == 0:
-        return f"{seconds // 3600}h"
-    return fallback
-
-for key, fallback in (("primary_window", "primary"), ("secondary_window", "secondary")):
-    w = rate.get(key)
-    if not isinstance(w, dict):
-        continue
-    used = w.get("used_percent")
-    try:
-        remaining = max(0, min(100, round(100 - float(used))))
-    except Exception:
-        remaining = None
-    windows.append({
-        "label": label_for(w.get("limit_window_seconds"), fallback),
-        "remaining_percent": remaining,
-        "reset_at": w.get("reset_at"),
-    })
-
-credits = data.get("credits") or {}
-reset_credits = data.get("rate_limit_reset_credits") or {}
-normalized = {
-    "plan": data.get("plan_type"),
-    "allowed": rate.get("allowed"),
-    "limit_reached": rate.get("limit_reached"),
-    "windows": windows,
-    "credits_balance": credits.get("balance"),
-    "credits_unlimited": credits.get("unlimited"),
-    "reset_credits": reset_credits.get("available_count"),
-}
-cache_path.write_text(json.dumps(normalized, ensure_ascii=False) + "\n", encoding="utf-8")
-PY
-}
-
-official_quota_summary() {
-    local cache="$CACHE_DIR/official-quota.json"
-    if [[ ! -s "$cache" ]]; then
-        if official_auth_source >/dev/null 2>&1; then
-            printf '%s' "$(L '未刷新 · 按 R' 'not refreshed · press R')"
-        else
-            printf '%s' "N/A"
-        fi
-        return 0
-    fi
-
-    python3 - "$cache" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-try:
-    data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-except Exception:
-    print("N/A")
-    raise SystemExit
-
-parts = []
-for w in data.get("windows") or []:
-    p = w.get("remaining_percent")
-    if p is not None:
-        parts.append(f"{w.get('label','?')} {p}%")
-
-if data.get("credits_unlimited") is True:
-    parts.append("credits ∞")
-elif data.get("credits_balance") not in (None, ""):
-    parts.append(f"credits {data['credits_balance']}")
-
-print(" · ".join(parts) if parts else "N/A")
-PY
-}
-
-cmd_quota() {
-    local force="${1:-}"
-    local cache="$CACHE_DIR/official-quota.json"
-    if [[ "$force" == "--refresh" || "$force" == "-r" ]]; then
-        rm -f "$cache"
-    fi
-
-    if ! cache_fresh "$cache" 60; then
-        refresh_official_quota_cache >/dev/null 2>&1 || true
-    fi
-
-    ui_header "$(L '官方 CODEX 额度' 'OFFICIAL CODEX USAGE')"
-    if [[ ! -s "$cache" ]]; then
-        ui_warn "$(L '无法读取官方 Codex 额度。需要保存过官方 ChatGPT 登录，并且 chatgpt.com 可访问。' 'Official Codex usage is unavailable. A saved ChatGPT login and chatgpt.com connectivity are required.')"
-        return 1
-    fi
-
-    python3 - "$cache" "$RELAY_LANG" <<'PY'
-import json
-import sys
-from datetime import datetime
-from pathlib import Path
-
-data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-lang = sys.argv[2]
-
-plan = data.get("plan") or "?"
-print(f"  {'套餐' if lang == 'zh' else 'plan':<12} {plan}")
-
-for w in data.get("windows") or []:
-    p = w.get("remaining_percent")
-    reset = w.get("reset_at")
-    if reset:
-        try:
-            reset_text = datetime.fromtimestamp(int(reset)).strftime("%Y-%m-%d %H:%M")
-        except Exception:
-            reset_text = "?"
-    else:
-        reset_text = "?"
-    left = f"{p}%" if p is not None else "?"
-    name = w.get("label") or "?"
-    print(f"  {name:<12} {left} {'剩余' if lang == 'zh' else 'left'} · {'重置' if lang == 'zh' else 'reset'} {reset_text}")
-
-if data.get("credits_unlimited") is True:
-    credits = "∞"
-else:
-    credits = data.get("credits_balance")
-if credits not in (None, ""):
-    print(f"  {'Credits':<12} {credits}")
-
-rc = data.get("reset_credits")
-if rc is not None:
-    print(f"  {'重置券' if lang == 'zh' else 'reset credits':<12} {rc}")
-
-allowed = data.get("allowed")
-if allowed is not None:
-    status = "OK" if allowed else ("不可用" if lang == "zh" else "blocked")
-    print(f"  {'状态' if lang == 'zh' else 'status':<12} {status}")
-PY
-}
-
-# -----------------------------
 # 每用户 / 每 Profile API Key
 # -----------------------------
 key_file_for_profile() {
@@ -2759,12 +2524,6 @@ dashboard_refresh() {
     ui_step "$(L '刷新 daemon 版本…' 'Refreshing daemon version…')"
     refresh_dashboard_daemon || true
 
-    if official_auth_source >/dev/null 2>&1; then
-        ui_step "$(L '刷新官方 Codex 额度…' 'Refreshing official Codex usage…')"
-        rm -f "$CACHE_DIR/official-quota.json"
-        refresh_official_quota_cache >/dev/null 2>&1 || true
-    fi
-
     ui_ok "$(L 'Dashboard 状态已刷新' 'Dashboard status refreshed')"
 }
 
@@ -2840,21 +2599,19 @@ cmd_menu_settings() {
     while true; do
         clear || true
         ui_header "$(L '设置' 'SETTINGS')"
-        ui_menu_item "1" "$(L '官方 Codex 额度' 'Official Codex usage')" "$(official_quota_summary)"
-        ui_menu_item "2" "$(L 'API Key 管理' 'API Key management')" ""
-        ui_menu_item "3" "$(L 'Profile 列表' 'Profile list')" ""
-        ui_menu_item "4" "$(L '查看 config.toml' 'Show config.toml')" ""
-        ui_menu_item "5" "$(L '语言' 'Language')" "$RELAY_LANG"
-        ui_menu_item "6" "$(L '当前状态' 'Current status')" ""
+        ui_menu_item "1" "$(L 'API Key 管理' 'API Key management')" ""
+        ui_menu_item "2" "$(L 'Profile 列表' 'Profile list')" ""
+        ui_menu_item "3" "$(L '查看 config.toml' 'Show config.toml')" ""
+        ui_menu_item "4" "$(L '语言' 'Language')" "$RELAY_LANG"
+        ui_menu_item "5" "$(L '当前状态' 'Current status')" ""
         ui_menu_item "0" "$(L '返回' 'Back')" ""
         printf '\n> '; read -r choice
         case "$choice" in
-            1) clear || true; cmd_quota --refresh || true; ui_pause ;;
-            2) cmd_key_menu ;;
-            3) clear || true; cmd_list; ui_pause ;;
-            4) clear || true; ui_header "CONFIG.TOML"; cmd_show_config; ui_pause ;;
-            5) cmd_language_menu ;;
-            6) clear || true; cmd_status; ui_pause ;;
+            1) cmd_key_menu ;;
+            2) clear || true; cmd_list; ui_pause ;;
+            3) clear || true; ui_header "CONFIG.TOML"; cmd_show_config; ui_pause ;;
+            4) cmd_language_menu ;;
+            5) clear || true; cmd_status; ui_pause ;;
             0|q|Q) return ;;
             *) ui_warn "$(L '无效选择' 'Invalid choice')"; sleep 0.5 ;;
         esac
@@ -2865,7 +2622,7 @@ cmd_menu_settings() {
 # 菜单
 # -----------------------------
 cmd_menu() {
-    local choice name key_state network quota cli daemon daemon_text processes proxy_text host
+    local choice name key_state network cli daemon daemon_text processes proxy_text host
     while true; do
         name="$(current_profile)"
         load_profile "$name"
@@ -2881,7 +2638,6 @@ cmd_menu() {
         fi
 
         network="$(dashboard_network_summary "$name")"
-        quota="$(official_quota_summary)"
         cli="$(dashboard_cli_version)"
         daemon="$(dashboard_daemon_version)"
         daemon_text="$daemon"
@@ -2910,19 +2666,14 @@ cmd_menu() {
         ui_kv "daemon" "$daemon_text"
         ui_kv "$(L 'Codex 进程' 'processes')" "$processes"
         ui_kv "$(L 'Shell 代理' 'shell proxy')" "$proxy_text"
-        ui_kv "$(L '官方额度' 'official quota')" "$quota"
-        if [[ "$P_AUTH" == "relay" ]]; then
-            ui_kv "$(L '中转额度' 'relay quota')" "$(L 'N/A · 服务商未提供稳定公开接口' 'N/A · no stable public provider API')"
-        fi
-
         ui_section "$(L '功能' 'MAIN')"
         ui_menu_item "1" "$(L '中转站' 'Providers')" "$(L '切换 · 模型 · 地址 · Key · 测速' 'switch · model · endpoint · key · speed')"
         ui_menu_item "2" "$(L '聊天历史' 'Chat / History')" "$(L '最近 · 搜索 · 恢复 · 修复' 'recent · search · resume · repair')"
         ui_menu_item "3" "$(L '网络与服务' 'Network & Services')" "$(L '诊断 · Direct · daemon · 一键停止' 'diagnostics · direct · daemon · stop')"
-        ui_menu_item "4" "$(L '设置' 'Settings')" "$(L '额度 · Key · 配置 · 语言' 'quota · key · config · language')"
+        ui_menu_item "4" "$(L '设置' 'Settings')" "$(L 'Key · 配置 · 语言 · 状态' 'key · config · language · status')"
         printf '\n'
         ui_menu_item "Enter" "$(L '启动当前 Codex' 'Launch current Codex')" "$name"
-        ui_menu_item "R" "$(L '刷新状态' 'Refresh status')" "$(L '网络 + 额度' 'network + quota')"
+        ui_menu_item "R" "$(L '刷新状态' 'Refresh status')" "$(L '网络 + daemon' 'network + daemon')"
         ui_menu_item "Q" "$(L '退出' 'Exit')" ""
 
         printf '\n%s›%s %s%s%s  ' "$UI_PINK" "$UI_RESET" "$UI_BOLD" "$(L '请选择操作' 'Choose an action')" "$UI_RESET"
@@ -2976,7 +2727,6 @@ ${UI_BOLD}Quick start${UI_RESET}
 ${UI_BOLD}Profiles${UI_RESET}
   cr list
   cr status
-  cr quota                    Show official Codex usage/quota
   cr use NAME
   cr official MODEL
   cr add NAME BASE_URL MODEL [PROVIDER_ID] [AUTH]
@@ -3040,7 +2790,6 @@ ${UI_BOLD}快速开始${UI_RESET}
 ${UI_BOLD}中转站 / Profile${UI_RESET}
   cr list                     查看全部 profile
   cr status                   查看当前状态
-  cr quota                    查看官方 Codex 额度
   cr use NAME                 切换 profile
   cr official MODEL           设置官方 OpenAI 模型
   cr add NAME BASE_URL MODEL [PROVIDER_ID] [AUTH]
@@ -3100,8 +2849,6 @@ case "${1:-}" in
         shift; cmd_list "$@" ;;
     status)
         shift; cmd_status "$@" ;;
-    quota|usage)
-        shift; cmd_quota "$@" ;;
     use)
         shift; cmd_use "$@" ;;
     switch)
