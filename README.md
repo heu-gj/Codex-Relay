@@ -1,100 +1,67 @@
+<div align="center">
+
 # Codex-Relay
 
-一个面向 Linux / SSH 服务器的 Codex CLI 中转站管理器。
+**Linux / SSH 上的 OpenAI Codex CLI 路由切换与运维工具**
 
-它解决几类常见问题：
+Keep the official \`codex\` binary. Switch providers, keys, models, network routes, and local history safely.
 
-- 在 **Nova / baibai / 官方 OpenAI / 自定义中转站**之间快速切换
-- 保持 OpenAI 官方 `codex` 可执行文件不变，只切换 `~/.codex/config.toml` 和 `~/.codex/auth.json`
-- 启动 Codex 时清理 `HTTP_PROXY / HTTPS_PROXY / ALL_PROXY`，避免依赖本机 VPN/7897
-- 检查 DNS、TCP DNS、HTTPS 直连
-- 普通 DNS 异常时，验证候选 IP 后可选择写入 `/etc/hosts`
-- 查看、搜索、恢复 Codex 本地聊天
-- 一键检查/备份/修复 Codex 历史数据库与索引
-- 支持多用户：脚本可以共用，每个用户仍使用自己的 `~/.codex`
+[![Shell syntax check](https://github.com/heu-gj/Codex-Relay/actions/workflows/shell-syntax.yml/badge.svg)](https://github.com/heu-gj/Codex-Relay/actions/workflows/shell-syntax.yml)
+![Linux](https://img.shields.io/badge/platform-Linux-1793D1?logo=linux&logoColor=white)
+![Bash](https://img.shields.io/badge/shell-Bash-4EAA25?logo=gnubash&logoColor=white)
+![Codex CLI](https://img.shields.io/badge/Codex_CLI-native-111827)
 
-> 适用于你有权使用的 API 服务和网络环境。请遵守所使用中转站、学校/单位网络和服务提供商的相关条款。
+[简体中文](./README.md) · [English](./README_EN.md)
 
-## 内置配置
+</div>
 
-### baibai
+---
 
-```toml
-model_provider = "baibai"
-model = "gpt-5.6-sol"
-model_reasoning_effort = "xhigh"
-network_access = "enabled"
-disable_response_storage = true
+Codex-Relay 是一个面向 **Linux / SSH / 多用户服务器** 的 Bash 工具，用来管理 OpenAI Codex CLI 的 provider、API Key、模型、网络直连与本地聊天历史。
 
-[model_providers.baibai]
-name = "OpenAI"
-base_url = "https://api.sharesai.xyz/v1"
-wire_api = "responses"
-requires_openai_auth = true
-```
+它**不是代理服务器，也不会替换 OpenAI 官方 Codex CLI**。它做的事情很简单：在启动官方 \`codex\` 前，为当前 Linux 用户安全地准备好 \`~/.codex/config.toml\`、\`~/.codex/auth.json\` 和必要的网络环境。
 
-### nova
+> [!NOTE]
+> 项目内置的 Nova / baibai 只是便捷 profile。第三方服务的可用性、价格、模型和服务条款由对应服务商决定；Codex-Relay 与 OpenAI 或这些第三方服务商均无隶属关系。
 
-```toml
-model_provider = "OpenAI"
-model = "gpt-5.5"
-review_model = "gpt-5.5"
-disable_response_storage = true
-network_access = "enabled"
-windows_wsl_setup_acknowledged = true
+## 为什么需要 Codex-Relay
 
-[model_providers.OpenAI]
-name = "OpenAI"
-base_url = "https://ai.novacode.top"
-wire_api = "responses"
-requires_openai_auth = true
+如果你在一台服务器上经常遇到这些情况：
 
-[features]
-goals = true
-```
+- 需要在 **官方 OpenAI / Nova / baibai / 自定义中转站**之间切换；
+- 不想改动或包装官方 \`codex\` 可执行文件；
+- 多个 Linux 用户共用服务器，但 **API Key、认证和聊天必须彼此隔离**；
+- Shell 里残留了 \`HTTP_PROXY\` / \`HTTPS_PROXY\` / \`ALL_PROXY\`，导致 Codex 错走本地代理；
+- 想先读取中转站可用模型，再选择默认模型；
+- DNS / HTTPS 直连异常，希望有诊断与可验证的 \`/etc/hosts\` 修复流程；
+- 切换 provider 后，仍希望保留、搜索、恢复原来的 Codex 聊天；
 
-Nova 默认**不会**写入不存在的 `model_catalog_json`，避免 Codex 启动时报 `No such file or directory`。
+那么 Codex-Relay 就是为这种环境设计的。
 
-## 推荐安装方式：全局程序 + 每用户独立配置
+## 功能一览
 
-多人服务器推荐只维护一份主程序：
+| 能力 | 说明 |
+| --- | --- |
+| 🚦 Route Switcher | 卡片式切换官方 OpenAI、内置或自定义 provider |
+| 🔐 每用户独立凭据 | API Key 存在当前用户自己的 \`~/.codex-relay/secrets/\` |
+| 🧠 模型发现 | 自动尝试 \`/models\` / \`/v1/models\`，可直接编号选择 |
+| ⚡ 原生 Codex | 不替换 \`codex\`，只切换官方配置和认证文件 |
+| 🌐 无代理启动 | 启动 Codex 时清除 HTTP/HTTPS/ALL proxy |
+| 🩺 网络诊断 | System DNS、TCP DNS、HTTPS 与直连测速 |
+| 🧭 Direct 修复 | 验证候选 IP 后才允许写入 \`/etc/hosts\` |
+| 💬 聊天管理 | 最近聊天、搜索、单条恢复、全部历史恢复 |
+| 🧰 历史修复 | 备份、SQLite 修复、索引重建、健康检查 |
+| 👥 多用户隔离 | 主程序可全局共用，用户配置 / Key / 聊天互不共享 |
+| 🌏 中英文 UI | 中文默认，可切换 English |
+| 🎨 NO_COLOR | 支持无彩色终端 |
 
-```text
-/usr/local/bin/codex-relay
-```
+## 30 秒上手
 
-每个用户仍然使用自己的 Codex 数据目录：
+### 管理员：安装主程序
 
-```text
-~/.codex/config.toml
-~/.codex/auth.json
-~/.codex/sessions/
-~/.codex/state_5.sqlite
-```
+推荐通过 GitHub 主站安装，避免部分网络无法访问 \`raw.githubusercontent.com\`：
 
-而 Codex-Relay 自己的状态独立放在：
-
-```text
-~/.codex-relay/current
-~/.codex-relay/relays.tsv
-~/.codex-relay/official-model
-~/.codex-relay/language
-~/.codex-relay/secrets/      # 当前用户保存的各中转站 API Key
-~/.codex-relay/auth/          # 官方 Codex 登录快照 / daemon 刷新状态
-~/.codex-relay/cache/         # Dashboard 的网络 / daemon 状态缓存
-~/.codex-relay/overrides/    # 当前用户自己的模型 / endpoint 覆盖
-~/.codex-relay/backups/      # config.toml / auth.json / history 备份
-```
-
-这样 `~/.codex` 只保留 Codex 本身的数据，relay 的 profile、语言、当前选择和备份不会再混进去。
-
-### 1. 管理员：全局安装 / 更新
-
-#### 推荐方式：通过 GitHub 主站 `git clone`
-
-某些校园网、服务器网络或 DNS 环境可能无法连接 `raw.githubusercontent.com`，但仍然可以访问 `github.com`。这种情况下推荐：
-
-```bash
+\`\`\`bash
 rm -rf /tmp/Codex-Relay
 
 git clone --depth=1 \
@@ -106,46 +73,19 @@ bash -n /tmp/Codex-Relay/codex-relay
 sudo install -o root -g root -m 755 \
   /tmp/Codex-Relay/codex-relay \
   /usr/local/bin/codex-relay
-```
+\`\`\`
 
 验证：
 
-```bash
+\`\`\`bash
 /usr/local/bin/codex-relay help
-```
+\`\`\`
 
-以后 GitHub 有更新时，管理员重新执行上面这组命令即可。所有用户会立即使用新的全局版本。
+### 普通用户：配置快捷命令
 
-#### 可选方式：`raw.githubusercontent.com` 可访问时
+服务器已经安装 \`/usr/local/bin/codex-relay\` 后，普通用户**不需要再访问 GitHub**：
 
-如果服务器能正常访问 `raw.githubusercontent.com`，也可以直接：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/heu-gj/Codex-Relay/main/install.sh \
-  | sudo bash -s -- --global
-```
-
-如果看到：
-
-```text
-curl: (7) Failed to connect to raw.githubusercontent.com port 443
-```
-
-不要继续重试这条命令，改用上面的 `git clone` 安装方式。
-
-### 2. 新用户：不需要访问 GitHub
-
-只要管理员已经安装：
-
-```text
-/usr/local/bin/codex-relay
-```
-
-新用户第一次登录后**不需要下载或安装 codex-relay**。
-
-配置快捷命令：
-
-```bash
+\`\`\`bash
 cat >> ~/.bashrc <<'EOF'
 
 alias cr='/usr/local/bin/codex-relay'
@@ -153,104 +93,35 @@ alias cx='/usr/local/bin/codex-relay run'
 EOF
 
 source ~/.bashrc
-```
+\`\`\`
 
-第一次使用时，为每个中转站保存当前用户自己的 API Key（输入过程不会回显）：
+第一次为需要使用的中转站保存当前用户自己的 Key：
 
-```bash
+\`\`\`bash
 cr key set nova
 cr key set baibai
-```
+\`\`\`
 
-然后可以一条命令切换并启动：
+然后直接：
 
-```bash
+\`\`\`bash
+cr
+\`\`\`
+
+或：
+
+\`\`\`bash
 cr switch nova
 cr switch baibai
-```
+\`\`\`
 
-也可以继续使用两步方式：
+## 界面预览
 
-```bash
-cr use nova
-cx
-```
+### Route Switcher
 
-如果某个 profile 还没有保存 Key，第一次启动时会自动提示输入一次；以后在该用户下切换时会自动加载对应 Key。
+直接执行 \`cr\`：
 
-确认当前使用的是全局程序：
-
-```bash
-type -a codex-relay
-command -v codex-relay
-alias cr
-alias cx
-```
-
-推荐结果：
-
-```text
-/usr/local/bin/codex-relay
-```
-
-其中：
-
-```bash
-alias cr='/usr/local/bin/codex-relay'
-alias cx='/usr/local/bin/codex-relay run'
-```
-
-### 3. 旧用户从用户级版本迁移到全局版本
-
-如果之前存在：
-
-```text
-~/bin/codex-relay
-```
-
-建议先备份或删除它，避免 PATH 优先命中旧版本：
-
-```bash
-mv ~/bin/codex-relay \
-  ~/bin/codex-relay.user-backup.$(date +%Y%m%d-%H%M%S) \
-  2>/dev/null || true
-
-hash -r
-```
-
-然后把 `cr` / `cx` 明确指向：
-
-```text
-/usr/local/bin/codex-relay
-```
-
-> 重点：程序全局共用，但每个用户的 `~/.codex` 仍然独立。因此不会共享 API Key，也不会串聊天记录。
-
-旧版曾写在 `~/.codex` 里的 `.relay-current`、`relays.tsv`、`.official-model` 等管理器状态，新版第一次运行时会自动迁移到 `~/.codex-relay/`；不会移动或修改 Codex 的认证、session 和数据库。
-
-## 快速开始
-
-像 CC-Switch 一样，直接运行：
-
-```bash
-cr
-```
-
-会进入新版 **Route Switcher / 路由切换器**。主界面使用卡片式布局，直接显示：
-
-```text
-当前路由
-模型 / reasoning
-endpoint
-API Key 状态
-网络缓存状态
-ACTIVE / STANDBY
-BUILT-IN / OFFICIAL / CUSTOM
-```
-
-示意：
-
-```text
+\`\`\`text
 CODEX RELAY // 路由切换器
 
 ◆ 当前路由
@@ -267,825 +138,642 @@ CODEX RELAY // 路由切换器
        ├─ model    gpt-5.5
        └─ route    ai.novacode.top    ✓ KEY   NET 未检测
 
+────────────────────────────────────────────────
   [Enter] 启动当前 Codex
   [A]     添加中转站
   [R]     刷新当前路由网络
   [M]     打开完整控制中心
   [0]     退出
-```
+\`\`\`
 
-主列表不会为了显示网络状态主动测速，只读取缓存，因此打开和返回都保持轻量。按 `R` 时才刷新当前路由的网络状态。
+菜单重绘只读取本地状态和缓存，**不会为了展示页面自动发网络请求**。网络刷新由用户主动按 \`R\` 触发。
 
-完整控制中心使用：
+### Control Center
 
-```bash
+\`\`\`bash
 cr menu
-```
+\`\`\`
 
-新版 `cr menu` 是 Dashboard，而不是 17 项长菜单。首页会显示：
+\`\`\`text
+CODEX RELAY // 控制中心
 
-```text
-当前中转站
-模型 / endpoint
-API Key 状态
-无代理直连状态与延迟
-Codex CLI 版本
-后台 daemon 版本（版本不一致会警告）
-当前用户 Codex 进程数
-Shell proxy 状态
-```
+◆ 当前状态
+  中转站       ● baibai
+  model        gpt-5.6-sol · xhigh
+  endpoint     api.sharesai.xyz
+  API Key      ✓ 已设置
+  网络         ✓ Direct · 168 ms
+  Codex CLI    0.x.x
+  daemon       0.x.x
+  Codex 进程   2
 
-下面只保留四个一级入口：
+◆ 功能
+  [1] 中转站
+  [2] 聊天历史
+  [3] 网络与服务
+  [4] 设置
 
-```text
-[1] 中转站
-[2] 聊天历史
-[3] 网络与服务
-[4] 设置
+  [Enter] 启动当前 Codex
+  [R]     刷新状态
+  [Q]     退出
+\`\`\`
 
-[Enter] 启动当前 Codex
-[R] 刷新网络 / daemon 状态
-[Q] 退出
-```
+## 安装与升级
 
-Dashboard 打开和重绘时只读取本地状态/缓存，不主动发网络请求，也不查询额度。只有按 `R` 时才刷新当前中转站网络状态和 daemon 版本，因此弱网环境下不会因为打开菜单而卡住。
+### 推荐：Git Clone 安装
 
-切到 Nova：
+\`\`\`bash
+rm -rf /tmp/Codex-Relay
 
-```bash
+git clone --depth=1 \
+  https://github.com/heu-gj/Codex-Relay.git \
+  /tmp/Codex-Relay
+
+bash -n /tmp/Codex-Relay/codex-relay
+bash -n /tmp/Codex-Relay/install.sh
+
+sudo install -o root -g root -m 755 \
+  /tmp/Codex-Relay/codex-relay \
+  /usr/local/bin/codex-relay
+
+hash -r
+\`\`\`
+
+以后升级时重复执行即可。因为主程序位于 \`/usr/local/bin/codex-relay\`，服务器所有用户会使用同一份最新版；每个人的个人配置仍保持独立。
+
+### 可选：Raw 安装
+
+当服务器能访问 \`raw.githubusercontent.com\` 时：
+
+\`\`\`bash
+curl -fsSL https://raw.githubusercontent.com/heu-gj/Codex-Relay/main/install.sh \
+  | sudo bash -s -- --global
+\`\`\`
+
+如果看到：
+
+\`\`\`text
+curl: (7) Failed to connect to raw.githubusercontent.com port 443
+\`\`\`
+
+直接改用上面的 \`git clone\` 方式。
+
+### 从旧的用户级版本迁移
+
+如果以前有：
+
+\`\`\`text
+~/bin/codex-relay
+\`\`\`
+
+建议先备份：
+
+\`\`\`bash
+mv ~/bin/codex-relay \
+  ~/bin/codex-relay.user-backup.$(date +%Y%m%d-%H%M%S) \
+  2>/dev/null || true
+
+hash -r
+\`\`\`
+
+然后让 \`cr\` / \`cx\` 明确指向 \`/usr/local/bin/codex-relay\`。
+
+## Provider 与模型
+
+### 切换 Provider
+
+只切换配置，不启动：
+
+\`\`\`bash
 cr use nova
-cx
-```
-
-切到 baibai：
-
-```bash
 cr use baibai
+\`\`\`
+
+切换并启动官方 Codex：
+
+\`\`\`bash
+cr switch nova
+cr switch baibai
+\`\`\`
+
+使用当前 profile 启动：
+
+\`\`\`bash
 cx
-```
+\`\`\`
 
-`cx` 等价于：
+### 读取并选择可用模型
 
-```bash
-codex-relay run
-```
+进入：
 
-启动时会清除：
+\`\`\`text
+cr
+→ 选择一个 relay provider
+→ [2] 选择 / 修改默认模型
+\`\`\`
 
-```text
+Relay 会使用当前用户保存的 API Key 尝试读取：
+
+\`\`\`text
+<Base URL>/models
+<Base URL>/v1/models
+\`\`\`
+
+读取成功后可以直接按编号选择：
+
+\`\`\`text
+CODEX RELAY // MODEL // BAIBAI
+
+当前模型     gpt-5.6-sol
+
+◆ 可用模型
+ [1] gpt-5.5
+ [2] gpt-5.6
+ [3] gpt-5.6-sol      ● 当前
+ [4] ...
+
+ [R] 重新读取模型列表
+ [M] 手动输入模型 ID
+ [0] 返回
+\`\`\`
+
+如果服务商不提供模型枚举接口，仍可以手动输入：
+
+\`\`\`bash
+cr model PROFILE MODEL
+\`\`\`
+
+### 添加自定义中转站
+
+在 Route Switcher 中按 \`A\` 进入 4 步向导：
+
+1. 中转站名称
+2. API Base URL
+3. 默认模型
+4. Provider ID
+
+保存前会显示完整配置预览，只有输入 \`YES\` / \`确认\` 后才写入。
+
+> [!IMPORTANT]
+> 自定义中转站使用 Codex 的 \`wire_api = "responses"\`。服务商必须支持 **OpenAI Responses API**。如果只支持 \`/chat/completions\` 而不支持 \`/responses\`，不能直接使用当前向导。
+
+Base URL **不会自动补 \`/v1\`**。是否包含 \`/v1\` 必须以服务商文档为准。
+
+## API Key 与认证
+
+每个 relay provider 的 Key 都保存在当前用户自己的：
+
+\`\`\`text
+~/.codex-relay/secrets/<profile>.key
+\`\`\`
+
+权限：
+
+\`\`\`text
+~/.codex-relay/          700
+*.key                    600
+\`\`\`
+
+常用命令：
+
+\`\`\`bash
+cr key
+cr key set PROFILE
+cr key remove PROFILE
+\`\`\`
+
+激活 relay provider 时，Codex-Relay 会按 Codex 原生 API-key 结构写入当前用户的：
+
+\`\`\`text
+~/.codex/auth.json
+\`\`\`
+
+真实 Key **不会写进 \`config.toml\`**。
+
+如果检测到原来的官方 ChatGPT/Codex 登录，Relay 会保存快照：
+
+\`\`\`text
+~/.codex-relay/auth/official.json
+\`\`\`
+
+之后切回：
+
+\`\`\`bash
+cr use official
+\`\`\`
+
+即可恢复官方认证。
+
+> [!WARNING]
+> 更新或删除**当前正在使用的** relay Key 时，Codex-Relay 会停止当前 Linux 用户的 Codex 服务/进程，使新认证确定生效。这可能中断该用户正在运行或排队的任务。修改非当前 provider 的 Key 不会停止正在运行的 Codex。
+
+## 网络与 Direct 模式
+
+Codex-Relay 启动 Codex 时会清理：
+
+\`\`\`text
 http_proxy
 https_proxy
 HTTP_PROXY
 HTTPS_PROXY
 all_proxy
 ALL_PROXY
-```
+\`\`\`
 
-因此 Codex 不会因为当前 shell 残留 `127.0.0.1:7897` 而依赖 VPN。
+因此不会因为当前 Shell 遗留的 \`127.0.0.1:7897\` 等代理而自动走 VPN/代理。
 
-## 每用户 / 每中转站独立 API Key
+### 网络诊断
 
-这是多人服务器模式下的核心设计：**同一个全局 `codex-relay`，每个 Linux 用户都有自己的 Key，而且 Nova、baibai、自定义中转站之间互不共用。Codex 本身仍然是 OpenAI 官方版本。**
+\`\`\`bash
+cr check nova
+cr check baibai
+\`\`\`
 
-每个中转站的 Key 长期保存在当前用户自己的：
+诊断包括：
 
-```text
-~/.codex-relay/secrets/nova.key
-~/.codex-relay/secrets/baibai.key
-```
+- System DNS
+- TCP DNS
+- HTTPS 直连
+- Shell proxy 状态
 
-目录权限为 `700`，Key 文件权限为 `600`。
+只要能够收到有效 HTTP 状态码，就说明 DNS/TCP/TLS/HTTP 链路已经到达服务端。比如 \`401\` / \`403\` 可能是认证问题，但不等同于网络不可达。
 
-设置或更新 Key：
+### Direct 修复
 
-```bash
-cr key set nova
-cr key set baibai
-```
+\`\`\`bash
+cr direct PROFILE
+\`\`\`
 
-查看是否已设置（不会显示 Key 内容）：
+流程：
 
-```bash
-cr key
-```
+\`\`\`text
+普通直连
+   │
+   ├─ 成功 → 不修改系统
+   │
+   └─ 失败
+        ↓
+TCP DNS 查询
+        ↓
+获取候选 IPv4
+        ↓
+curl --resolve 验证 TLS / HTTPS
+        ↓
+验证成功后才写 /etc/hosts
+\`\`\`
 
-在 `cr menu → [4] 设置 → [1] API Key 管理` 中，会进入动态 Credentials 页面。它会自动列出所有 `relay` 类型中转站，包括自定义 provider，而不是只写死 Nova / baibai：
+修改前会备份 \`/etc/hosts\`。
 
-```text
-CODEX RELAY // CREDENTIALS
+> [!CAUTION]
+> \`/etc/hosts\` 是系统级配置，需要 sudo 权限。Codex-Relay 不会为官方 OpenAI 固定 CDN/IP 映射。
 
-◆ 当前用户 API Keys
+## 聊天历史与恢复
 
-  [1]  BAIBAI       ✓ KEY SET   ● ACTIVE
-       └─ gpt-5.6-sol · api.sharesai.xyz
+聊天记录始终属于**当前 Linux 用户的 Codex 数据目录**，不是某个 relay provider：
 
-  [2]  NOVA         ✓ KEY SET   ○ STANDBY
-       └─ gpt-5.5 · ai.novacode.top
+\`\`\`text
+~/.codex/sessions/
+~/.codex/archived_sessions/
+~/.codex/state_5.sqlite
+~/.codex/session_index.jsonl
+\`\`\`
 
-  [3]  MYRELAY      ✕ NO KEY    ○ STANDBY
+所以从 baibai 切到 Nova，并不会把 baibai 时期的聊天“搬走”。
 
-```
+### 查看与搜索
 
-进入某个凭据后可以更新或删除 Key。删除操作需要再次输入确认；如果删除的是当前正在使用的中转站 Key，会明确提示并自动停止当前用户 Codex。
+\`\`\`bash
+cr history 100
+cr search 关键词
+\`\`\`
 
-切换到中转站时，Codex-Relay 会同时处理两份 **Codex 原生文件**：
+### 继续一条旧聊天
 
-```text
-~/.codex/config.toml
-~/.codex/auth.json
-```
+\`\`\`bash
+cr recover-menu
+\`\`\`
 
-例如 Nova 激活后，`config.toml` 保持标准 provider 写法：
+Session Picker 会展示时间、原 provider、model 和标题，并允许选择后续使用原 provider、Nova、baibai、official 或当前路由。
 
-```toml
+### 一键恢复全部聊天记录
+
+如果 rollout 还在，但 SQLite / session index 缺失或不同步：
+
+\`\`\`text
+cr menu
+→ [2] 聊天历史
+→ [8] 一键恢复全部聊天记录
+\`\`\`
+
+确认后会自动执行：
+
+\`\`\`text
+确认没有重要运行/排队任务
+        ↓
+停止当前用户 Codex
+        ↓
+备份历史数据
+        ↓
+扫描 sessions / archived_sessions
+        ↓
+修复 SQLite / thread 元数据
+        ↓
+重建 session_index
+        ↓
+健康检查
+\`\`\`
+
+它会扫描当前用户**所有 provider 的历史**。例如当前路由已经是 Nova，也仍会恢复以前 baibai 的历史记录；当前路由不会因此被改回 baibai。
+
+命令行保守模式：
+
+\`\`\`bash
+cr stop
+cr repair-history
+\`\`\`
+
+## 多用户服务器设计
+
+推荐结构：
+
+\`\`\`text
+/usr/local/bin/codex-relay        # 所有人共用一份程序
+
+/home/userA/.codex/               # userA 的 Codex 数据
+/home/userA/.codex-relay/         # userA 的 Relay 状态 / Key / 备份
+
+/home/userB/.codex/
+/home/userB/.codex-relay/
+\`\`\`
+
+设计原则：
+
+- 主程序全局共用；
+- \`~/.codex/\` 仍完全属于当前用户；
+- \`~/.codex-relay/\` 也完全属于当前用户；
+- API Key 不跨用户共享；
+- \`auth.json\` 不跨用户共享；
+- 聊天数据库不跨用户共享；
+- 模型 / endpoint override 不影响其他用户；
+- \`cr stop\` 只处理当前 Linux 用户，不 sudo 停止其他用户进程。
+
+## 数据目录
+
+\`\`\`text
+~/.codex/
+├── config.toml
+├── auth.json
+├── sessions/
+├── archived_sessions/
+├── state_5.sqlite
+└── session_index.jsonl
+
+~/.codex-relay/
+├── current
+├── relays.tsv
+├── official-model
+├── language
+├── secrets/
+├── auth/
+├── cache/
+├── overrides/
+└── backups/
+\`\`\`
+
+Codex 原生数据与 Relay 管理状态分开，升级主程序不会覆盖个人聊天和凭据。
+
+## 内置 Profiles
+
+<details>
+<summary><strong>baibai</strong></summary>
+
+\`\`\`toml
+model_provider = "baibai"
+model = "gpt-5.6-sol"
+model_reasoning_effort = "xhigh"
+network_access = "enabled"
+disable_response_storage = true
+
+[model_providers.baibai]
+name = "OpenAI"
+base_url = "https://api.sharesai.xyz/v1"
+wire_api = "responses"
+requires_openai_auth = true
+\`\`\`
+
+</details>
+
+<details>
+<summary><strong>Nova</strong></summary>
+
+\`\`\`toml
+model_provider = "OpenAI"
+model = "gpt-5.5"
+review_model = "gpt-5.5"
+disable_response_storage = true
+network_access = "enabled"
+windows_wsl_setup_acknowledged = true
+
 [model_providers.OpenAI]
 name = "OpenAI"
 base_url = "https://ai.novacode.top"
 wire_api = "responses"
 requires_openai_auth = true
-```
 
-而当前激活 Key 使用 Codex 官方 API-key 登录结构写入 `auth.json`：
-
-```json
-{
-  "auth_mode": "apikey",
-  "OPENAI_API_KEY": "<当前 Nova Key>"
-}
-```
-
-真实 Key 不会写进 `config.toml`。每次覆盖 `auth.json` 前都会备份到：
-
-```text
-~/.codex-relay/backups/auth/
-```
-
-如果检测到原来的 ChatGPT 官方登录，Relay 会保存完整快照：
-
-```text
-~/.codex-relay/auth/official.json
-```
-
-之后 `cr use official` / `cr switch official` 会恢复这份官方认证，因此可以在：
-
-```text
-Nova → baibai → 官方 ChatGPT → Nova
-```
-
-之间切换而不反复登录。
-
-切换并直接启动：
-
-```bash
-cr switch nova
-cr switch baibai
-```
-
-如果通过 `cr key set PROFILE` 更新的是**当前正在使用的中转站**，Relay 会立即同步 `~/.codex/auth.json`，然后自动执行当前用户级的 Codex 停止流程，让新 Key 在下次启动时确定生效。这个停止流程只影响当前 Linux 用户，但会中断该用户正在运行或排队的 Codex 工作。
-
-如果更新的是**非当前中转站**，Relay 只保存新的 Key，不会打断当前 Codex。等以后切换到该中转站时再应用。
-
-`cr use PROFILE` 只负责切换 config/auth，不主动启动 Codex；`cr switch PROFILE` 会切换并启动。若切换导致认证变化，启动前仍会刷新旧 app-server daemon。
-
-> 已经运行中的 Codex 会话不会热切换 provider。API Key 或中转站发生变化后，应启动新的 Codex 会话；Relay 会负责当前用户的必要服务刷新，不再需要手动粘贴 API Key。
-
-## 语言设置
-
-Codex-Relay **默认使用中文界面**。
-
-第一次运行时，如果还没有语言配置文件，会自动使用：
-
-```text
-zh
-```
-
-语言设置保存在当前用户自己的：
-
-```text
-~/.codex-relay/language
-```
-
-查看当前语言：
-
-```bash
-cr language
-```
-
-切换到中文：
-
-```bash
-cr language zh
-```
-
-切换到英文：
-
-```bash
-cr language en
-```
-
-也可以在：
-
-```bash
-cr menu
-```
-
-中选择 **语言设置**。
-
-语言设置是**每个用户独立**的，因此同一台服务器可以：
-
-```text
-userA → 中文
-userB → English
-userC → 中文
-```
-
-而所有人仍然共用同一个：
-
-```text
-/usr/local/bin/codex-relay
-```
-
-## CC-Switch 风格中转站管理
-
-打开交互式中转站管理器：
-
-```bash
-cr
-```
-
-等价于：
-
-```bash
-cr providers
-```
-
-也可以在：
-
-```bash
-cr menu
-```
-
-中选择 **[1] 中转站**。
-
-进入某个中转站后会打开分区式详情页：
-
-```text
-ROUTE // BAIBAI
-
-● ACTIVE · 当前路由   BUILT-IN
-
-◆ 路由信息
-◆ 启动
-◆ 配置
-◆ 诊断
-◆ 维护
-```
-
-可以直接：
-
-- 按 Enter 切换并启动 Codex
-- 按 `U` 只切换 config/auth，不启动
-- 选择 / 修改当前用户的默认模型；进入模型选择时会先尝试读取中转站的 `/models` 或 `/v1/models`
-- 修改当前用户的 API 地址
-- 设置 / 更新当前用户自己的 API Key
-- 按 `R` 刷新该中转站网络缓存
-- 无代理 HTTPS 测速
-- DNS / HTTPS 网络诊断
-- 重置当前用户的模型 / endpoint 修改
-- 删除自定义中转站
-
-### 添加自定义中转站向导
-
-在 Route Switcher 中按 `A` 会进入详细的 4 步向导，而不是直接连续询问几个字段。
-
-向导开始时会先说明两个关键约束：
-
-- 自定义中转站按 Codex 的 `wire_api = "responses"` 写入，因此服务商必须支持 **OpenAI Responses API**。
-- 如果服务商只支持 `/chat/completions` 而不支持 `/responses`，不能直接使用这个向导。
-- 向导本身不会自动联网；保存后再用 `cr check PROFILE` 或详情页 `R` 测试网络。
-
-四个步骤分别是：
-
-```text
-STEP 1/4  中转站名称
-  - Codex-Relay 本地名称
-  - 用于 cr switch NAME / cr key set NAME
-  - 允许字母、数字、_、-
-  - nova / baibai / official 是保留名称
-
-STEP 2/4  API 地址
-  - 填服务商提供的 OpenAI 兼容 Base URL
-  - 必须以 http:// 或 https:// 开头
-  - 是否包含 /v1 以服务商文档为准，不自动补全
-  - 公网中转建议使用 HTTPS
-
-STEP 3/4  默认模型
-  - 填服务商实际支持的模型 ID
-  - 例如 gpt-5.5 / gpt-5.6-sol
-  - 模型名称会原样发送给服务商
-
-STEP 4/4  Provider ID
-  - 写入 [model_providers.<ID>]
-  - 如果服务商没有特殊要求，直接回车使用中转站名称
-  - 不是 API Key，也不是模型名
-```
-
-最后会显示完整预览：
-
-```text
-名称
-Provider ID
-默认模型
-Base URL
-认证方式
-```
-
-只有输入 `YES` 或“确认”才会保存。保存完成后会询问是否立即设置 API Key，并显示下一步命令：
-
-```bash
-cr check NAME
-cr use NAME
-cr switch NAME
-```
-
-如果输入的名称已经存在，向导不会直接覆盖，必须额外输入 `OVERWRITE` 或“覆盖”确认。
-
-例如只修改当前用户的 Nova 默认模型：
-
-```bash
-cr model nova gpt-5.6
-```
-
-在交互界面中，进入某个 relay 中转站后选择 `[2] 选择 / 修改默认模型`，Relay 会使用当前用户保存的该中转站 API Key 尝试读取：
-
-```text
-<Base URL>/models
-<Base URL>/v1/models
-```
-
-例如 baibai 的 Base URL 是 `https://api.sharesai.xyz/v1`，会读取 `https://api.sharesai.xyz/v1/models`；对于不带 `/v1` 的地址，会依次尝试 `/models` 和 `/v1/models`。
-
-读取成功后可以直接按编号选择模型；当前模型会显示 `● 当前`。最多显示前 60 个模型，也可以重新读取或手动输入模型 ID。如果服务商不提供模型枚举接口，仍可使用手动输入，不影响原有功能。
-
-
-只修改当前用户看到的 Nova endpoint：
-
-```bash
-cr endpoint nova https://example.com
-```
-
-测速：
-
-```bash
-cr speed nova
-cr speed baibai
-```
-
-这些修改不会写进全局的 `/usr/local/bin/codex-relay`，而是保存在当前用户自己的：
-
-```text
-~/.codex-relay/overrides/nova.conf
-~/.codex-relay/overrides/baibai.conf
-~/.codex-relay/overrides/<自定义中转站>.conf
-```
-
-因此同一台服务器可以出现：
-
-```text
-userA: Nova → gpt-5.5
-userB: Nova → gpt-5.6
-userC: Nova → 另一个兼容 endpoint
-```
-
-互相不影响。
-
-内置的 `nova` / `baibai` 可以按用户修改模型、endpoint 和 Key，但不能删除。自定义中转站可以在 `cr providers` 中直接添加和删除；新增时可以立即保存该用户自己的 API Key。
-
-命令行仍然保留：
-
-```bash
-cr list
-cr status
-cr services
-cr stop
-cr use NAME
-cr switch NAME
-cr model PROFILE MODEL
-cr endpoint PROFILE URL
-cr speed [PROFILE]
-cr add NAME BASE_URL MODEL [PROVIDER_ID] [AUTH]
-cr delete PROFILE
-cr show-config
-```
-
-其中：
-
-- `cr use NAME`：切换 `~/.codex/config.toml` + `~/.codex/auth.json`，但不启动 Codex
-- `cr switch NAME`：完成 config/auth 切换，并启动 OpenAI 官方 Codex
-- `cx`：使用当前 profile 的 config/auth 启动 OpenAI 官方 Codex
-
-`cr use` / `cr switch` 都使用同一套 `CODEX_HOME`，不会创建第二套 `~/.codex`。
-
-> 正在运行的 Codex 进程不会热加载新的 provider / endpoint / API Key。切换中转站时仍然需要结束当前 Codex 进程并启动新的进程，但 `cr switch PROFILE` 已经把重新配置和重新加载 Key 自动化。
-
-## 当前用户 Codex 服务管理
-
-查看当前 Linux 用户正在运行的 Codex 进程：
-
-```bash
-cr services
-```
-
-一键停止当前用户全部 Codex 服务和进程：
-
-```bash
-cr stop
-```
-
-`cr stop` 只处理当前用户，不使用 sudo，也不会停止其他 Linux 用户的 Codex。它会：
-
-1. 先调用 Codex 官方命令：
-
-   ```bash
-   codex app-server daemon stop
-   ```
-
-2. 再扫描当前用户残留的 `codex` / `codex-*` 进程。
-3. 对残留进程发送 `TERM`，短暂等待退出。
-4. 对仍未退出的 Codex 进程发送 `KILL`。
-5. 最后再次确认当前用户已经没有 Codex 进程。
-
-> `cr stop` 会中断当前用户正在运行或排队的 Codex 工作。执行前确认没有需要保留的活跃任务。
-
-如果只是想停止官方托管的 app-server daemon，可以直接使用：
-
-```bash
-codex app-server daemon stop
-```
-
-如果准备修改聊天数据库、重建索引或做一键历史修复，推荐先执行：
-
-```bash
-cr stop
-```
-
-`cr reindex` 和 `cr repair-history` 现在也会检查当前用户是否仍有 Codex 进程；如果有，会直接提示：
-
-```text
-请先执行: cr stop
-```
-
-完整控制中心 `cr menu` 的 **[3] 网络与服务** 中也提供“停止当前用户全部 Codex”。
-
-## 无 VPN / 无代理直连
-
-只检测：
-
-```bash
-cr check nova
-cr check baibai
-```
-
-网络诊断使用结构化状态面板，不再直接把 `getent` / `dig` 原始输出堆到屏幕：
-
-```text
-CODEX RELAY // NETWORK DIAGNOSTICS
-
-◆ ROUTE
-  profile      baibai
-  endpoint     api.sharesai.xyz
-
-◆ CHECKS
-  [!] Shell Proxy        DETECTED · Codex 启动时会绕过
-  [✓] System DNS         104.21.x.x
-  [✓] TCP DNS            104.21.x.x
-  [✓] Direct HTTPS       HTTP 401 · 168 ms
-
-◆ STATUS
-  ✓ NETWORK READY
-```
-
-其中 HTTP 401 / 403 / 404 仍表示 DNS、TCP、TLS 和 HTTPS 链路已经到达服务端；诊断页面关注的是“能否直连”，不是 API Key 是否有效。成功诊断也会更新该 provider 的网络缓存，供 `cr` / `cr menu` 展示。
-
-第一次配置：
-
-```bash
-cr setup nova
-cr setup baibai
-```
-
-网络异常时重新检查：
-
-```bash
-cr direct nova
-cr direct baibai
-```
-
-处理逻辑：
-
-```text
-正常 DNS + HTTPS
-        │
-        ├── 成功 → 不修改系统
-        │
-        └── 失败
-              ↓
-        TCP DNS 查询
-              ↓
-        获取候选 IPv4
-              ↓
-        curl --resolve 验证 TLS / HTTPS
-              ↓
-        验证成功后才允许写 /etc/hosts
-```
-
-修改 `/etc/hosts` 前会自动备份。
-
-> `/etc/hosts` 是系统级配置。如果当前用户没有 sudo 权限，需要管理员协助。
-
-## 聊天记录
-
-查看最近聊天：
-
-```bash
-cr history
-cr history 100
-```
-
-搜索：
-
-```bash
-cr search 关键词
-```
-
-交互恢复：
-
-```bash
-cr recover-menu
-```
-
-菜单中的三个入口含义不同：
-
-```text
-[3] 继续单个聊天
-    选择一条旧会话继续
-
-[4] 浏览全部聊天
-    打开 Codex 的全部会话选择器
-    不修改历史数据库
-
-[8] 一键恢复全部聊天记录
-    扫描当前用户所有 provider 的聊天
-    修复 SQLite / session_index
-    让缺失记录重新进入统一历史库
-```
-
-例如以前主要使用 baibai，现在已经切到 nova，如果目标是把以前所有聊天记录重新恢复到历史列表，应使用 `[8] 一键恢复全部聊天记录`。当前路由会继续保持 nova；历史恢复不会把旧聊天原本记录的 provider 元数据批量改成 nova。
-
-恢复界面是 Session Picker，会显示时间、原 provider、原 model 和标题，并支持按 `S` 搜索：
-
-```text
-CODEX RELAY // CHAT RECOVERY
-
-◆ 最近会话
-
-  [ 1]  2026-09-18 21:42   baibai
-        ├─ model  gpt-5.6-sol
-        └─ 修复 Codex Relay 中转站界面
-
-  [ 2]  2026-09-18 18:07   OpenAI
-        ├─ model  gpt-5.5
-        └─ Python 项目性能分析
-
-  [S] 搜索聊天
-  [0] 返回
-```
-
-选中会话后再选择恢复路由：
-
-```text
-[Enter] 按原 Provider 恢复
-[B]     baibai
-[N]     nova
-[O]     official
-[C]     当前路由
-[0]     返回聊天列表
-```
-
-搜索使用 SQLite 参数绑定，不把用户输入直接拼进 SQL。
-
-按 ID 恢复：
-
-```bash
-cr resume THREAD_ID
-```
-
-强制使用指定 profile：
-
-```bash
-cr resume THREAD_ID nova
-cr resume THREAD_ID baibai
-```
-
-列出全部可恢复聊天：
-
-```bash
-cr resume-all
-```
-
-## 聊天健康检查和一键恢复
-
-检查本地聊天状态：
-
-```bash
-cr health
-```
-
-它会对比：
-
-- `sessions/**/*.jsonl`
-- `state_5.sqlite`
-- `session_index.jsonl`
-
-备份：
-
-```bash
-cr backup
-```
-
-仅重建索引：
-
-```bash
-cr stop
-cr reindex
-```
-
-`cr reindex` 会修改 Codex 本地索引，因此要求当前用户没有运行中的 Codex 进程。
-
-一键恢复有两种方式。
-
-在 `cr menu → [2] 聊天历史 → [8] 一键修复历史` 中，Relay 会先进行二次确认，不会直接停止服务。界面会显示当前检测到的 Codex 进程数，并提示：
-
-```text
-请确认当前用户没有正在执行或排队的重要任务。
-输入 YES 或“确认”继续
-```
-
-脚本无法仅凭进程状态可靠判断 daemon 队列里是否仍有重要任务，因此不会替用户做这个决定。只有明确确认后，才会继续：
-
-```text
-二次确认
-    ↓
-自动停止当前用户 Codex
-    ↓
-确认已全部停止
-    ↓
-备份
-    ↓
-修复 SQLite / thread 元数据
-    ↓
-重建索引
-    ↓
-健康检查
-```
-
-如果用户取消、自动停止失败，或停止后仍检测到 Codex 进程，都会取消修复，不会继续写数据库。
-
-命令行 `cr repair-history` 仍保持保守行为，不会自动中断正在运行的 Codex。使用命令行时请先执行：
-
-```bash
-cr stop
-cr repair-history
-```
-
-`repair-history` 会先备份，然后保守修复：
-
-- rollout 仍在但 SQLite 缺失的 thread
-- 失效的 rollout 路径
-- 为空的 provider 元数据
-- 缺失的部分 thread 元信息
-- `session_index.jsonl`
-
-最后执行 SQLite integrity check 和历史健康检查。
-
-它**不会删除原始 `sessions/*.jsonl`**，也不会无条件覆盖已有正常 provider。
-
-## 多用户结构
-
-推荐最终结构：
-
-```text
-/usr/local/bin/codex-relay        # 全局唯一主程序
-
-/home/userA/.codex/               # userA 的 Codex 配置 / 认证 / 聊天
-/home/userA/.codex-relay/         # userA 的 relay 状态 / profile / 备份
-
-/home/userB/.codex/
- /home/userB/.codex-relay/
-
- /home/userC/.codex/
- /home/userC/.codex-relay/
-```
-
-因此：
-
-- 主程序只维护一份：`/usr/local/bin/codex-relay`
-- GitHub 更新后只需要管理员更新一次
-- 新用户不需要访问 GitHub
-- `cr` / `cx` 每个用户在自己的 `~/.bashrc` 中配置
-- `~/.codex/` 只用于 Codex 自己的配置、认证和聊天
-- `~/.codex-relay/` 只用于 Codex-Relay 的状态、profile、语言、API Key、用户覆盖和备份
-- `~/.codex-relay/secrets/` 每个用户独立；不同中转站的 Key 也分别保存
-- `~/.codex-relay/overrides/` 每个用户独立；模型和 endpoint 修改不会影响其他用户
-- `~/.codex/auth.json` 每个用户独立，不要互相复制
-- `~/.codex/sessions/` 和 SQLite 聊天数据库每个用户独立
-- `/etc/hosts` 是系统级配置，一次有效修改可以被所有用户共享
-- 如果 `raw.githubusercontent.com` 无法连接，管理员使用 `git clone https://github.com/...` 更新即可
-
-## 常用命令速查
-
-```bash
-cr                          # 打开中转站管理器
-cr menu                     # 打开完整控制中心
-cr providers                # 同 cr
-
-cr language
-cr language zh
-cr language en
-
-cr providers
-cr model nova gpt-5.6
-cr endpoint nova https://example.com
-cr speed nova
-
-cr key
-cr key set nova
-cr key set baibai
-
-cr switch nova
-cr switch baibai
-
-cr use nova
-cr use baibai
-cx
-
-cr check nova
-cr setup nova
-cr direct nova
-
-cr history 100
-cr search 关键词
-cr recover-menu
-cr resume THREAD_ID
-cr resume-all
-
-cr health
-cr backup
-cr repair-history
-```
+[features]
+goals = true
+\`\`\`
+
+Nova 的 Base URL 故意不自动追加 \`/v1\`。Relay 也不会写入不存在的 \`model_catalog_json\`。
+
+</details>
+
+## 命令速查
+
+| 命令 | 作用 |
+| --- | --- |
+| \`cr\` | 打开 Route Switcher |
+| \`cr menu\` | 打开完整 Control Center |
+| \`cr list\` | 查看所有 profile |
+| \`cr status\` | 查看当前状态 |
+| \`cr use NAME\` | 切换 config/auth，不启动 |
+| \`cr switch NAME\` | 切换 config/auth 并启动 Codex |
+| \`cx\` | 使用当前 profile 启动官方 Codex |
+| \`cr model PROFILE MODEL\` | 修改当前用户默认模型 |
+| \`cr endpoint PROFILE URL\` | 修改当前用户 endpoint |
+| \`cr speed [PROFILE]\` | 无代理 HTTPS 测速 |
+| \`cr key\` | 查看 Key 状态 |
+| \`cr key set PROFILE\` | 保存 / 更新 Key |
+| \`cr key remove PROFILE\` | 删除 Key |
+| \`cr add ...\` | 命令行添加自定义 provider |
+| \`cr delete PROFILE\` | 删除自定义 provider |
+| \`cr check [PROFILE]\` | 网络诊断 |
+| \`cr direct [PROFILE]\` | Direct 修复 |
+| \`cr services\` | 查看当前用户 Codex 进程 |
+| \`cr stop\` | 停止当前用户全部 Codex |
+| \`cr history [N]\` | 最近聊天 |
+| \`cr search KEYWORD\` | 搜索聊天 |
+| \`cr recover-menu\` | 交互式恢复一条聊天 |
+| \`cr resume THREAD_ID [PROFILE]\` | 按 ID 恢复 |
+| \`cr resume-all [PROFILE]\` | 打开全部可恢复聊天 |
+| \`cr health\` | 历史健康检查 |
+| \`cr backup\` | 备份聊天历史 |
+| \`cr reindex\` | 重建索引，要求先停止 Codex |
+| \`cr repair-history\` | 备份 + 修复 + 重建索引 |
+| \`cr language zh/en\` | 切换界面语言 |
+
+完整帮助：
+
+\`\`\`bash
+cr help
+\`\`\`
 
 ## 依赖
 
-建议：
+基础功能：
 
 - Linux
 - Bash
 - Python 3
 - curl
-- `dig`（Ubuntu/Debian: `dnsutils`）
-- sqlite3
 - OpenAI Codex CLI
 
-Ubuntu / Debian 可安装基础工具：
+高级网络 / 历史功能：
 
-```bash
+- \`dig\`（Ubuntu/Debian: \`dnsutils\`）
+- \`sqlite3\`
+
+Ubuntu / Debian：
+
+\`\`\`bash
 sudo apt update
 sudo apt install -y curl dnsutils sqlite3 python3
-```
+\`\`\`
 
 ## 无彩色模式
 
-如果终端不适合彩色 UI：
-
-```bash
+\`\`\`bash
+NO_COLOR=1 cr
 NO_COLOR=1 cr menu
-```
+\`\`\`
 
 ## 安全说明
 
-本项目不会主动把 API Key 写进仓库。
+请**不要**提交这些内容：
 
-请不要提交：
-
-```text
+\`\`\`text
 ~/.codex/auth.json
 ~/.codex/sessions/
 ~/.codex/state_5.sqlite
 ~/.codex-relay/secrets/
 .env
-API Key / Token
-```
+任何 API Key / Token
+\`\`\`
+
+项目会尽量做到：
+
+- Key 输入不回显；
+- Key 文件权限为 \`600\`；
+- Secret 目录权限为 \`700\`；
+- 覆盖 \`auth.json\` 前先备份；
+- 历史修复前先备份；
+- 危险操作要求明确确认；
+- 停止 Codex 时只影响当前 Linux 用户。
+
+## 常见问题
+
+<details>
+<summary><strong>Codex-Relay 会替换官方 Codex CLI 吗？</strong></summary>
+
+不会。最终启动的仍然是系统中的官方 \`codex\` 命令。Relay 只负责准备当前用户的配置、认证和启动环境。
+
+</details>
+
+<details>
+<summary><strong>从 baibai 切到 Nova 后，以前的聊天还在吗？</strong></summary>
+
+在。聊天保存在当前用户自己的 \`~/.codex/\`。如果索引异常，可使用 \`cr menu → 聊天历史 → 一键恢复全部聊天记录\`。
+
+</details>
+
+<details>
+<summary><strong>为什么网络诊断出现 HTTP 401，但 Codex 服务器其实能访问？</strong></summary>
+
+401 表示请求已经到达服务端，只是认证未通过。网络诊断关注的是 DNS / TCP / TLS / HTTP 链路是否可达；API Key 是否有效是另一层问题。
+
+</details>
+
+<details>
+<summary><strong>为什么不用 raw.githubusercontent.com 安装？</strong></summary>
+
+部分校园网、机房或服务器 DNS 环境可以访问 github.com，但会阻断 raw.githubusercontent.com。因此 README 默认推荐 \`git clone\`。
+
+</details>
+
+<details>
+<summary><strong>自定义服务只支持 /chat/completions 可以吗？</strong></summary>
+
+当前自定义 provider 写入 \`wire_api = "responses"\`，因此需要服务商支持 OpenAI Responses API。
+
+</details>
+
+<details>
+<summary><strong>修改 API Key 会不会中断正在运行的任务？</strong></summary>
+
+只有修改当前激活 provider 的 Key 时，Relay 才会停止当前 Linux 用户的 Codex 进程以确保新认证生效。修改非当前 provider 的 Key 不会打断当前 Codex。
+
+</details>
+
+## CI
+
+每次 push / pull request 都会执行：
+
+\`\`\`bash
+bash -n codex-relay
+bash -n install.sh
+\`\`\`
+
+工作流：
+
+\`\`\`text
+.github/workflows/shell-syntax.yml
+\`\`\`
+
+## Contributing
+
+Issues 和 Pull Requests 都欢迎。
+
+提交前建议至少运行：
+
+\`\`\`bash
+bash -n codex-relay
+bash -n install.sh
+\`\`\`
+
+涉及认证、历史数据库、进程管理时，请特别注意：
+
+- 不要提交真实 Key / Token；
+- 不要复制其他 Linux 用户的 \`auth.json\`；
+- 不要用 sudo 批量停止其他用户的 Codex；
+- 历史修复应优先采用“备份 + 保守修改”，不要无条件删除原始 rollout。
 
 ## License
 
-当前仓库尚未指定开源许可证。发布或二次分发前，请根据你的需求添加合适的 LICENSE。
+> [!IMPORTANT]
+> 当前仓库还没有添加 \`LICENSE\` 文件。**在法律意义上，这意味着代码公开可见，但尚未授予他人明确的复制、修改和分发许可。**
+>
+> 如果准备正式作为开源项目发布，建议在第一个正式 Release 前选择并添加合适的许可证，例如 MIT、Apache-2.0 或 GPL-3.0。
+
+## Acknowledgements
+
+Codex-Relay 围绕 OpenAI Codex CLI 的原生配置和本地数据工作。感谢所有愿意测试不同 Linux、SSH、多用户和网络环境的使用者与贡献者。
+
+---
+
+<div align="center">
+
+如果 Codex-Relay 对你有帮助，欢迎 Star、Issue 或 PR。
+
+**One binary. Per-user isolation. Native Codex.**
+
+</div>
