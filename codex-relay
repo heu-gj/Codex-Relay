@@ -981,6 +981,25 @@ official_auth_source() {
                 printf '%s\n' "$AUTH_FILE"
                 return 0
                 ;;
+            apikey)
+                ;;
+            *)
+                if python3 - "$AUTH_FILE" <<'PY' >/dev/null 2>&1
+import json
+import sys
+from pathlib import Path
+try:
+    data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+tokens = data.get("tokens") or {}
+raise SystemExit(0 if tokens.get("access_token") else 1)
+PY
+                then
+                    printf '%s\n' "$AUTH_FILE"
+                    return 0
+                fi
+                ;;
         esac
     fi
     [[ -f "$OFFICIAL_AUTH_FILE" ]] || return 1
