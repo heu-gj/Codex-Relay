@@ -758,6 +758,22 @@ cmd_switch() {
     cmd_run
 }
 
+cmd_add_interactive() {
+    local name url model provider yn
+    clear || true
+    ui_header "$(L '添加中转站' 'ADD PROVIDER')"
+    printf '\n%s: ' "$(L '名称' 'Name')"; read -r name
+    [[ -n "$name" ]] || return
+    case "$name" in nova|baibai|official) ui_warn "$(L '这是内置保留名称' 'Reserved built-in name')"; return ;; esac
+    printf '%s: ' "$(L 'API 地址' 'Base URL')"; read -r url
+    printf '%s: ' "$(L '默认模型' 'Default model')"; read -r model
+    printf '%s [%s]: ' "Provider ID" "$name"; read -r provider
+    provider="${provider:-$name}"
+    cmd_add "$name" "$url" "$model" "$provider" relay
+    printf '%s [Y/n]: ' "$(L '现在设置 API Key？' 'Set API key now?')"; read -r yn
+    case "$yn" in n|N) ;; *) cmd_key set "$name" ;; esac
+}
+
 # -----------------------------
 # 网络 / 无 VPN 直连
 # -----------------------------
