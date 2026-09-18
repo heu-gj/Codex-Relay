@@ -14,6 +14,7 @@ LANGUAGE_FILE="$RELAY_DIR/language"
 SECRETS_DIR="$RELAY_DIR/secrets"
 AUTH_DIR="$RELAY_DIR/auth"
 OFFICIAL_AUTH_FILE="$AUTH_DIR/official.json"
+AUTH_RELOAD_FLAG="$AUTH_DIR/reload-needed"
 OVERRIDES_DIR="$RELAY_DIR/overrides"
 HOSTS_TAG="codex-relay-manager"
 
@@ -782,6 +783,7 @@ PY
     mv "$tmp" "$AUTH_FILE"
     chmod 600 "$AUTH_FILE" 2>/dev/null || true
     AUTH_CHANGED=1
+    : > "$AUTH_RELOAD_FLAG"
 }
 
 restore_official_auth() {
@@ -791,6 +793,7 @@ restore_official_auth() {
             backup_auth_json
             rm -f "$AUTH_FILE"
             AUTH_CHANGED=1
+            : > "$AUTH_RELOAD_FLAG"
         fi
         ui_warn "$(L '没有保存的官方 Codex 登录；已移除中转站认证，启动官方 Codex 后请登录一次' 'No saved official Codex login; relay auth was removed. Sign in once after launching official Codex')"
         return 0
@@ -804,6 +807,7 @@ restore_official_auth() {
     cp -a "$OFFICIAL_AUTH_FILE" "$AUTH_FILE"
     chmod 600 "$AUTH_FILE" 2>/dev/null || true
     AUTH_CHANGED=1
+    : > "$AUTH_RELOAD_FLAG"
 }
 
 apply_auth_for_profile() {
@@ -823,13 +827,14 @@ apply_auth_for_profile() {
 }
 
 refresh_daemon_after_auth_change() {
-    [[ "${AUTH_CHANGED:-0}" == "1" ]] || return 0
+    [[ -f "$AUTH_RELOAD_FLAG" ]] || return 0
     command -v codex >/dev/null 2>&1 || return 0
 
     if codex app-server daemon stop >/dev/null 2>&1; then
-        ui_info "$(L '认证已切换，已停止旧 Codex 后台服务；新进程会读取新的 auth.json' 'Auth changed; stopped the old Codex daemon so the new process reads auth.json')"
+        rm -f "$AUTH_RELOAD_FLAG"
+        ui_info "$(L '认证已切换，已在启动前刷新 Codex 后台服务' 'Auth changed; refreshed the Codex daemon before launch')"
     else
-        ui_warn "$(L 'auth.json 已更新；如果后台 Codex 服务仍缓存旧认证，请执行: codex app-server daemon stop' 'auth.json updated; if the Codex daemon still caches old auth, run: codex app-server daemon stop')"
+        ui_warn "$(L 'auth.json 已更新，但后台服务刷新失败；如仍使用旧认证，请执行: codex app-server daemon stop' 'auth.json updated but daemon refresh failed; if old auth persists, run: codex app-server daemon stop')"
     fi
 }
 
@@ -887,7 +892,6 @@ cmd_key() {
             prompt_relay_key "$name"
             if [[ "$(current_profile)" == "$name" ]]; then
                 apply_auth_for_profile "$name"
-                refresh_daemon_after_auth_change
             fi
             ;;
         remove|rm|delete)
@@ -897,7 +901,7 @@ cmd_key() {
                 backup_auth_json
                 rm -f "$AUTH_FILE"
                 AUTH_CHANGED=1
-                refresh_daemon_after_auth_change
+                : > "$AUTH_RELOAD_FLAG"
             fi
             ui_ok "$(L "已删除 $name 的本地 API Key" "Removed local API key for $name")"
             ;;
@@ -1421,7 +1425,6 @@ cmd_use() {
     load_profile "$1"
     apply_auth_for_profile "$1"
     write_config_for_profile "$1"
-    refresh_daemon_after_auth_change
 }
 
 cmd_setup() {
