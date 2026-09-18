@@ -2321,6 +2321,11 @@ ${UI_BOLD}Profiles${UI_RESET}
   cr official MODEL
   cr add NAME BASE_URL MODEL [PROVIDER_ID] [AUTH]
   cr show-config
+  cr providers                Interactive provider manager
+  cr model PROFILE MODEL      Change per-user default model
+  cr endpoint PROFILE URL     Change per-user endpoint
+  cr speed [PROFILE]          Direct HTTPS latency test
+  cr delete PROFILE           Delete a custom provider
 
 ${UI_BOLD}API keys${UI_RESET}
   cr key                      Show key status
@@ -2374,6 +2379,11 @@ ${UI_BOLD}中转站 / Profile${UI_RESET}
   cr official MODEL           设置官方 OpenAI 模型
   cr add NAME BASE_URL MODEL [PROVIDER_ID] [AUTH]
   cr show-config              查看当前 config.toml
+  cr providers                 打开中转站管理器
+  cr model PROFILE MODEL       修改当前用户默认模型
+  cr endpoint PROFILE URL      修改当前用户 API 地址
+  cr speed [PROFILE]           无代理 HTTPS 测速
+  cr delete PROFILE            删除自定义中转站
 
 ${UI_BOLD}API Key${UI_RESET}
   cr key                      查看各中转站 Key 状态
@@ -2430,6 +2440,16 @@ case "${1:-}" in
         shift; cmd_official "$@" ;;
     add)
         shift; cmd_add "$@" ;;
+    providers|provider)
+        shift; cmd_providers "$@" ;;
+    model)
+        shift; cmd_model "$@" ;;
+    endpoint|url)
+        shift; cmd_endpoint "$@" ;;
+    speed|ping)
+        shift; cmd_speed "$@" ;;
+    delete|remove)
+        shift; cmd_delete_profile "$@" ;;
     show-config)
         shift; cmd_show_config "$@" ;;
     check)
