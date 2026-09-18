@@ -30,7 +30,8 @@ disable_response_storage = true
 name = "OpenAI"
 base_url = "https://api.sharesai.xyz/v1"
 wire_api = "responses"
-requires_openai_auth = true
+requires_openai_auth = false
+env_key = "CODEX_RELAY_API_KEY"
 ```
 
 ### nova
@@ -47,7 +48,8 @@ windows_wsl_setup_acknowledged = true
 name = "OpenAI"
 base_url = "https://ai.novacode.top"
 wire_api = "responses"
-requires_openai_auth = true
+requires_openai_auth = false
+env_key = "CODEX_RELAY_API_KEY"
 
 [features]
 goals = true
@@ -79,6 +81,7 @@ Nova 默认**不会**写入不存在的 `model_catalog_json`，避免 Codex 启�
 ~/.codex-relay/relays.tsv
 ~/.codex-relay/official-model
 ~/.codex-relay/language
+~/.codex-relay/secrets/      # 当前用户自己的各中转站 API Key
 ~/.codex-relay/backups/
 ```
 
@@ -151,23 +154,28 @@ EOF
 source ~/.bashrc
 ```
 
-默认使用 Nova：
+第一次使用时，为每个中转站保存当前用户自己的 API Key（输入过程不会回显）：
+
+```bash
+cr key set nova
+cr key set baibai
+```
+
+然后可以一条命令切换并启动：
+
+```bash
+cr switch nova
+cr switch baibai
+```
+
+也可以继续使用两步方式：
 
 ```bash
 cr use nova
-```
-
-或者使用 baibai：
-
-```bash
-cr use baibai
-```
-
-然后启动：
-
-```bash
 cx
 ```
+
+如果某个 profile 还没有保存 Key，第一次启动时会自动提示输入一次；以后在该用户下切换时会自动加载对应 Key。
 
 确认当前使用的是全局程序：
 
@@ -259,6 +267,59 @@ ALL_PROXY
 ```
 
 因此 Codex 不会因为当前 shell 残留 `127.0.0.1:7897` 而依赖 VPN。
+
+## 每用户 / 每中转站独立 API Key
+
+这是多人服务器模式下的核心设计：**同一个全局 `codex-relay`，每个 Linux 用户都有自己的 Key，而且 Nova、baibai、自定义中转站之间互不共用。**
+
+Key 保存在当前用户自己的：
+
+```text
+~/.codex-relay/secrets/nova.key
+~/.codex-relay/secrets/baibai.key
+```
+
+目录权限会设置为 `700`，Key 文件权限为 `600`。
+
+设置或更新 Key：
+
+```bash
+cr key set nova
+cr key set baibai
+```
+
+查看是否已设置（不会显示 Key 内容）：
+
+```bash
+cr key
+```
+
+删除：
+
+```bash
+cr key remove nova
+cr key remove baibai
+```
+
+切换并直接启动：
+
+```bash
+cr switch nova
+cr switch baibai
+```
+
+也可以在 `cr menu` 中选择 **API Key 管理**。
+
+`~/.codex/config.toml` 里只会出现类似：
+
+```toml
+requires_openai_auth = false
+env_key = "CODEX_RELAY_API_KEY"
+```
+
+真实 Key **不会写进 `config.toml`**，启动 `cx` / `cr switch` 时才把当前 profile 对应的 Key 注入当前 Codex 进程。
+
+> 已经运行中的 Codex 进程不会热加载新的 endpoint / Key，所以更换中转站仍需要结束当前 Codex 进程再启动新的进程；但不再需要重新粘贴 API Key。`cr switch PROFILE` 把“切换配置 + 加载正确 Key + 启动”合并成了一条命令。
 
 ## 语言设置
 
@@ -489,7 +550,8 @@ cr repair-history
 - 新用户不需要访问 GitHub
 - `cr` / `cx` 每个用户在自己的 `~/.bashrc` 中配置
 - `~/.codex/` 只用于 Codex 自己的配置、认证和聊天
-- `~/.codex-relay/` 只用于 Codex-Relay 的状态、profile、语言和备份
+- `~/.codex-relay/` 只用于 Codex-Relay 的状态、profile、语言、API Key 和备份
+- `~/.codex-relay/secrets/` 每个用户独立；不同中转站的 Key 也分别保存
 - `~/.codex/auth.json` 每个用户独立，不要互相复制
 - `~/.codex/sessions/` 和 SQLite 聊天数据库每个用户独立
 - `/etc/hosts` 是系统级配置，一次有效修改可以被所有用户共享
@@ -502,6 +564,13 @@ cr menu
 cr language
 cr language zh
 cr language en
+
+cr key
+cr key set nova
+cr key set baibai
+
+cr switch nova
+cr switch baibai
 
 cr use nova
 cr use baibai
@@ -559,6 +628,7 @@ NO_COLOR=1 cr menu
 ~/.codex/auth.json
 ~/.codex/sessions/
 ~/.codex/state_5.sqlite
+~/.codex-relay/secrets/
 .env
 API Key / Token
 ```
