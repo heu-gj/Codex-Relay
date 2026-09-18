@@ -5,7 +5,7 @@
 它解决几类常见问题：
 
 - 在 **Nova / baibai / 官方 OpenAI / 自定义中转站**之间快速切换
-- 真正修改 `~/.codex/config.toml`，切换后直接运行 `codex` 也会使用当前配置
+- 保持 OpenAI 官方 `codex` 可执行文件不变，只切换 `~/.codex/config.toml` 和 `~/.codex/auth.json`
 - 启动 Codex 时清理 `HTTP_PROXY / HTTPS_PROXY / ALL_PROXY`，避免依赖本机 VPN/7897
 - 检查 DNS、TCP DNS、HTTPS 直连
 - 普通 DNS 异常时，验证候选 IP 后可选择写入 `/etc/hosts`
@@ -30,12 +30,7 @@ disable_response_storage = true
 name = "OpenAI"
 base_url = "https://api.sharesai.xyz/v1"
 wire_api = "responses"
-
-[model_providers.baibai.auth]
-command = "/usr/local/bin/codex-relay"
-args = ["key-read", "baibai"]
-timeout_ms = 5000
-refresh_interval_ms = 0
+requires_openai_auth = true
 ```
 
 ### nova
@@ -52,12 +47,7 @@ windows_wsl_setup_acknowledged = true
 name = "OpenAI"
 base_url = "https://ai.novacode.top"
 wire_api = "responses"
-
-[model_providers.OpenAI.auth]
-command = "/usr/local/bin/codex-relay"
-args = ["key-read", "nova"]
-timeout_ms = 5000
-refresh_interval_ms = 0
+requires_openai_auth = true
 
 [features]
 goals = true
@@ -89,9 +79,10 @@ Nova 默认**不会**写入不存在的 `model_catalog_json`，避免 Codex 启�
 ~/.codex-relay/relays.tsv
 ~/.codex-relay/official-model
 ~/.codex-relay/language
-~/.codex-relay/secrets/      # 当前用户自己的各中转站 API Key
+~/.codex-relay/secrets/      # 当前用户保存的各中转站 API Key
+~/.codex-relay/auth/          # 官方 Codex 登录快照 / daemon 刷新状态
 ~/.codex-relay/overrides/    # 当前用户自己的模型 / endpoint 覆盖
-~/.codex-relay/backups/
+~/.codex-relay/backups/      # config.toml / auth.json / history 备份
 ```
 
 这样 `~/.codex` 只保留 Codex 本身的数据，relay 的 profile、语言、当前选择和备份不会再混进去。
@@ -287,16 +278,16 @@ ALL_PROXY
 
 ## 每用户 / 每中转站独立 API Key
 
-这是多人服务器模式下的核心设计：**同一个全局 `codex-relay`，每个 Linux 用户都有自己的 Key，而且 Nova、baibai、自定义中转站之间互不共用。**
+这是多人服务器模式下的核心设计：**同一个全局 `codex-relay`，每个 Linux 用户都有自己的 Key，而且 Nova、baibai、自定义中转站之间互不共用。Codex 本身仍然是 OpenAI 官方版本。**
 
-Key 保存在当前用户自己的：
+每个中转站的 Key 长期保存在当前用户自己的：
 
 ```text
 ~/.codex-relay/secrets/nova.key
 ~/.codex-relay/secrets/baibai.key
 ```
 
-目录权限会设置为 `700`，Key 文件权限为 `600`。
+目录权限为 `700`，Key 文件权限为 `600`。
 
 设置或更新 Key：
 
@@ -311,12 +302,51 @@ cr key set baibai
 cr key
 ```
 
-删除：
+切换到中转站时，Codex-Relay 会同时处理两份 **Codex 原生文件**：
 
-```bash
-cr key remove nova
-cr key remove baibai
+```text
+~/.codex/config.toml
+~/.codex/auth.json
 ```
+
+例如 Nova 激活后，`config.toml` 保持标准 provider 写法：
+
+```toml
+[model_providers.OpenAI]
+name = "OpenAI"
+base_url = "https://ai.novacode.top"
+wire_api = "responses"
+requires_openai_auth = true
+```
+
+而当前激活 Key 使用 Codex 官方 API-key 登录结构写入 `auth.json`：
+
+```json
+{
+  "auth_mode": "apikey",
+  "OPENAI_API_KEY": "<当前 Nova Key>"
+}
+```
+
+真实 Key 不会写进 `config.toml`。每次覆盖 `auth.json` 前都会备份到：
+
+```text
+~/.codex-relay/backups/auth/
+```
+
+如果检测到原来的 ChatGPT 官方登录，Relay 会保存完整快照：
+
+```text
+~/.codex-relay/auth/official.json
+```
+
+之后 `cr use official` / `cr switch official` 会恢复这份官方认证，因此可以在：
+
+```text
+Nova → baibai → 官方 ChatGPT → Nova
+```
+
+之间切换而不反复登录。
 
 切换并直接启动：
 
@@ -325,23 +355,9 @@ cr switch nova
 cr switch baibai
 ```
 
-也可以在 `cr menu` 中选择 **API Key 管理**。
+如果 `auth.json` 发生变化，Relay 会记录待刷新状态；真正通过 `cx` / `cr switch` 启动新 Codex 时，再停止旧 app-server daemon，让新进程读取最新认证。这样不会在单纯执行 `cr use` 或 `cr key set` 时立即中断后台任务。
 
-`~/.codex/config.toml` 不会写真实 Key。Relay 模式现在使用 Codex 的 command-auth，例如：
-
-```toml
-[model_providers.OpenAI.auth]
-command = "/usr/local/bin/codex-relay"
-args = ["key-read", "nova"]
-timeout_ms = 5000
-refresh_interval_ms = 0
-```
-
-Codex / app-server daemon 需要鉴权时，会执行这个只读命令，从当前用户自己的 `~/.codex-relay/secrets/PROFILE.key` 读取 Key。这样不依赖 daemon 启动时继承的环境变量，因此更适合常驻 app-server 和多中转站切换。
-
-真实 Key **不会写进 `config.toml`**。
-
-> 已经运行中的 Codex 线程不会热切换到另一个 endpoint/provider，所以更换中转站仍建议结束当前 Codex 会话并启动新的会话；但不再需要重新粘贴 API Key。Relay 模式也不再依赖 `CODEX_RELAY_API_KEY` 环境变量。`cr switch PROFILE` 把“切换配置 + 加载正确 Key + 启动”合并成了一条命令。
+> 已经运行中的 Codex 会话不会热切换 provider。更换中转站时应结束当前会话再启动新会话，但不再需要重新粘贴 API Key。
 
 ## 语言设置
 
@@ -488,8 +504,9 @@ cr show-config
 
 其中：
 
-- `cr use NAME`：只切换 `~/.codex/config.toml`
-- `cr switch NAME`：切换配置 + 自动加载这个用户对应的 Key + 启动 Codex
+- `cr use NAME`：切换 `~/.codex/config.toml` + `~/.codex/auth.json`，但不启动 Codex
+- `cr switch NAME`：完成 config/auth 切换，并启动 OpenAI 官方 Codex
+- `cx`：使用当前 profile 的 config/auth 启动 OpenAI 官方 Codex
 
 `cr use` / `cr switch` 都使用同一套 `CODEX_HOME`，不会创建第二套 `~/.codex`。
 
