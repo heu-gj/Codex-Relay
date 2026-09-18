@@ -296,6 +296,11 @@ ui_init() {
 ui_init
 
 ui_width() {
+    if [[ -n "${UI_WIDTH_CACHE:-}" ]]; then
+        printf '%s' "$UI_WIDTH_CACHE"
+        return
+    fi
+
     local w="${COLUMNS:-}"
     if [[ -z "$w" ]] && command -v tput >/dev/null 2>&1; then
         w="$(tput cols 2>/dev/null || true)"
@@ -303,7 +308,8 @@ ui_width() {
     [[ "$w" =~ ^[0-9]+$ ]] || w=80
     (( w > 92 )) && w=92
     (( w < 64 )) && w=64
-    printf '%s' "$w"
+    UI_WIDTH_CACHE="$w"
+    printf '%s' "$UI_WIDTH_CACHE"
 }
 
 ui_rule() {
@@ -359,8 +365,12 @@ ui_pause() {
     read -r _
 }
 
+proxy_env_detected() {
+    [[ -n "${http_proxy:-}${https_proxy:-}${HTTP_PROXY:-}${HTTPS_PROXY:-}${all_proxy:-}${ALL_PROXY:-}" ]]
+}
+
 ui_proxy_state() {
-    if env | grep -qiE '^(http|https|all)_proxy='; then
+    if proxy_env_detected; then
         printf '%sDETECTED%s' "$UI_YELLOW" "$UI_RESET"
     else
         printf '%sCLEAN%s' "$UI_GREEN" "$UI_RESET"
@@ -466,28 +476,33 @@ load_profile() {
             ;;
     esac
 
-    local override_file override_value
+    local override_file override_key override_value
     override_file="$OVERRIDES_DIR/$name.conf"
     if [[ -f "$override_file" ]]; then
-        override_value="$(sed -n 's/^url=//p' "$override_file" | head -n1)"
-        [[ -n "$override_value" ]] && P_URL="$override_value"
-
-        override_value="$(sed -n 's/^model=//p' "$override_file" | head -n1)"
-        [[ -n "$override_value" ]] && P_MODEL="$override_value"
-
-        override_value="$(sed -n 's/^reasoning=//p' "$override_file" | head -n1)"
-        if [[ "$override_value" == "__EMPTY__" ]]; then
-            P_REASONING=""
-        elif [[ -n "$override_value" ]]; then
-            P_REASONING="$override_value"
-        fi
-
-        override_value="$(sed -n 's/^review=//p' "$override_file" | head -n1)"
-        if [[ "$override_value" == "__EMPTY__" ]]; then
-            P_REVIEW=""
-        elif [[ -n "$override_value" ]]; then
-            P_REVIEW="$override_value"
-        fi
+        while IFS='=' read -r override_key override_value; do
+            case "$override_key" in
+                url)
+                    [[ -n "$override_value" ]] && P_URL="$override_value"
+                    ;;
+                model)
+                    [[ -n "$override_value" ]] && P_MODEL="$override_value"
+                    ;;
+                reasoning)
+                    if [[ "$override_value" == "__EMPTY__" ]]; then
+                        P_REASONING=""
+                    elif [[ -n "$override_value" ]]; then
+                        P_REASONING="$override_value"
+                    fi
+                    ;;
+                review)
+                    if [[ "$override_value" == "__EMPTY__" ]]; then
+                        P_REVIEW=""
+                    elif [[ -n "$override_value" ]]; then
+                        P_REVIEW="$override_value"
+                    fi
+                    ;;
+            esac
+        done < "$override_file"
     fi
 }
 
@@ -508,11 +523,11 @@ profile_exists() {
 }
 
 current_profile() {
+    local name=""
     if [[ -s "$CURRENT" ]]; then
-        cat "$CURRENT"
-    else
-        echo "nova"
+        IFS= read -r name < "$CURRENT" || true
     fi
+    printf '%s\n' "${name:-nova}"
 }
 
 # -----------------------------
@@ -2684,7 +2699,7 @@ cmd_menu() {
         processes="$(dashboard_process_count)"
         host="$(dashboard_url_host "$P_URL")"
 
-        if env | grep -qiE '^(http|https|all)_proxy='; then
+        if proxy_env_detected; then
             proxy_text="$(L 'DETECTED → 启动时禁用' 'DETECTED → disabled on launch')"
         else
             proxy_text="CLEAN"
