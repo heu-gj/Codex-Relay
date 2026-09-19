@@ -2620,7 +2620,17 @@ PY
 }
 
 profile_for_old_provider() {
-    local provider="$1"
+    local provider="$1" current
+    current="$(current_profile)"
+
+    if profile_exists "$current"; then
+        load_profile "$current"
+        if [[ "$P_PROVIDER" == "$provider" ]]; then
+            echo "$current"
+            return
+        fi
+    fi
+
     case "$provider" in
         baibai) echo "baibai" ;;
         OpenAI) echo "nova" ;;
@@ -2628,8 +2638,9 @@ profile_for_old_provider() {
         *)
             local hit
             hit="$(awk -F '\t' -v p="$provider" '$2==p {print $1; exit}' "$REGISTRY")"
-            [[ -n "$hit" ]] && echo "$hit" || echo "$(current_profile)"
-            ;;    esac
+            [[ -n "$hit" ]] && echo "$hit" || echo "$current"
+            ;;
+    esac
 }
 
 cmd_resume() {
@@ -2657,15 +2668,17 @@ cmd_resume() {
     echo "  use profile : $profile"
 
     write_config_for_profile "$profile"
-    cmd_run resume "$tid"
+    load_profile "$profile"
+    cmd_run resume -m "$P_MODEL" "$tid"
 }
 
 cmd_resume_all() {
     local profile="${1:-$(current_profile)}"
     write_config_for_profile "$profile"
-    ui_info "$(L '正在打开当前用户全部 provider 的 Codex 会话。不会修改旧聊天的 model_provider。' 'Opening Codex sessions across all providers for the current user. Existing model_provider metadata is not rewritten.')"
+    load_profile "$profile"
+    ui_info "$(L '正在打开当前用户全部 provider 的 Codex 会话；继续会话时显式使用当前 profile 的模型 / provider / reasoning。' 'Opening Codex sessions across all providers; resumed chats explicitly use the active profile model / provider / reasoning settings.')"
     printf '\n'
-    cmd_run resume --all --include-non-interactive
+    cmd_run resume -m "$P_MODEL" --all --include-non-interactive
 }
 
 history_picker_rows() {
@@ -3573,6 +3586,7 @@ cmd_migrate_history_to_current_provider() {
     ui_header "$(L '迁移聊天到当前中转站' 'MIGRATE CHATS TO ACTIVE PROVIDER')"
     ui_kv "profile" "$profile"
     ui_kv "provider" "$target_provider"
+    ui_kv "model" "$P_MODEL"
     ui_kv "endpoint" "$P_URL"
     printf '\n'
 
@@ -3603,7 +3617,9 @@ if "model_provider" not in columns:
     conn.close()
     raise SystemExit("threads.model_provider 不存在，无法迁移")
 
-rows = conn.execute("SELECT id, COALESCE(model_provider,'') AS model_provider FROM threads").fetchall()
+rows = conn.execute(
+    "SELECT id, COALESCE(model_provider,'') AS model_provider FROM threads"
+).fetchall()
 before = Counter(str(r["model_provider"] or "") for r in rows)
 db_changed = sum(1 for r in rows if str(r["model_provider"] or "") != target)
 
@@ -3616,92 +3632,178 @@ if before:
         action = "keep" if provider == target else f"-> {target}"
         print(f"  {label:24} {count:6}  {action}")
 
-with conn:
-    conn.execute(
-        "UPDATE threads SET model_provider=? WHERE COALESCE(model_provider,'')<>?",
-        (target, target),
-    )
-
+# Stage every rollout rewrite before touching SQLite or replacing any source file.
+staged = []
 rollout_files = 0
 rollout_files_changed = 0
 rollout_meta_changed = 0
 rollout_before = Counter()
 
-for dirname in ("sessions", "archived_sessions"):
-    root = home / dirname
-    if not root.exists():
-        continue
-
-    for path in root.rglob("rollout-*.jsonl"):
-        rollout_files += 1
-        try:
-            raw_lines = path.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
-        except Exception as exc:
-            print("WARN: unable to read rollout:", path, exc)
+try:
+    for dirname in ("sessions", "archived_sessions"):
+        root = home / dirname
+        if not root.exists():
             continue
 
-        out = []
-        changed = False
-
-        for raw in raw_lines:
-            has_newline = raw.endswith("\n")
-            body = raw[:-1] if has_newline else raw
+        for path in root.rglob("rollout-*.jsonl"):
+            rollout_files += 1
+            fd, tmp_name = tempfile.mkstemp(
+                prefix=".codex-relay-provider-stage-",
+                suffix=".tmp",
+                dir=str(path.parent),
+                text=True,
+            )
+            changed = False
             try:
-                obj = json.loads(body)
+                with path.open("r", encoding="utf-8") as src, os.fdopen(
+                    fd, "w", encoding="utf-8"
+                ) as dst:
+                    for raw in src:
+                        has_newline = raw.endswith("\n")
+                        body = raw[:-1] if has_newline else raw
+                        try:
+                            obj = json.loads(body)
+                        except Exception:
+                            dst.write(raw)
+                            continue
+
+                        payload = obj.get("payload")
+                        if (
+                            obj.get("type") == "session_meta"
+                            and isinstance(payload, dict)
+                            and payload.get("id")
+                        ):
+                            old = str(payload.get("model_provider") or "")
+                            rollout_before[old] += 1
+                            if old != target:
+                                payload["model_provider"] = target
+                                obj["payload"] = payload
+                                line = json.dumps(
+                                    obj, ensure_ascii=False, separators=(",", ":")
+                                )
+                                if has_newline:
+                                    line += "\n"
+                                dst.write(line)
+                                changed = True
+                                rollout_meta_changed += 1
+                                continue
+
+                        dst.write(raw)
+
+                    dst.flush()
+                    os.fsync(dst.fileno())
+
+                if changed:
+                    shutil.copymode(path, tmp_name)
+                    staged.append((path, Path(tmp_name)))
+                    rollout_files_changed += 1
+                else:
+                    os.unlink(tmp_name)
             except Exception:
-                out.append(raw)
-                continue
+                try:
+                    os.unlink(tmp_name)
+                except OSError:
+                    pass
+                raise
 
-            payload = obj.get("payload")
-            if obj.get("type") == "session_meta" and isinstance(payload, dict) and payload.get("id"):
-                old = str(payload.get("model_provider") or "")
-                rollout_before[old] += 1
-                if old != target:
-                    payload["model_provider"] = target
-                    obj["payload"] = payload
-                    line = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
-                    if has_newline:
-                        line += "\n"
-                    out.append(line)
-                    changed = True
-                    rollout_meta_changed += 1
-                    continue
-
-            out.append(raw)
-
-        if not changed:
-            continue
-
-        fd, tmp_name = tempfile.mkstemp(
-            prefix=".codex-relay-provider-",
-            suffix=".tmp",
-            dir=str(path.parent),
-            text=True,
+    # Keep a per-file rollback copy while the SQLite transaction is open.
+    replaced = []
+    backups = []
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "UPDATE threads SET model_provider=? WHERE COALESCE(model_provider,'')<>?",
+            (target, target),
         )
+
+        for path, staged_path in staged:
+            fd, backup_name = tempfile.mkstemp(
+                prefix=".codex-relay-provider-original-",
+                suffix=".tmp",
+                dir=str(path.parent),
+            )
+            os.close(fd)
+            backup_path = Path(backup_name)
+            shutil.copy2(path, backup_path)
+            backups.append(backup_path)
+
+            os.replace(staged_path, path)
+            replaced.append((path, backup_path))
+
+        db_mismatch = conn.execute(
+            "SELECT COUNT(*) FROM threads WHERE COALESCE(model_provider,'')<>?",
+            (target,),
+        ).fetchone()[0]
+        if db_mismatch:
+            raise RuntimeError(
+                f"provider verification failed in SQLite: {db_mismatch} rows differ"
+            )
+
+        rollout_mismatch = 0
+        verified_session_meta = 0
+        for dirname in ("sessions", "archived_sessions"):
+            root = home / dirname
+            if not root.exists():
+                continue
+            for path in root.rglob("rollout-*.jsonl"):
+                with path.open("r", encoding="utf-8") as src:
+                    for raw in src:
+                        try:
+                            obj = json.loads(raw)
+                        except Exception:
+                            continue
+                        payload = obj.get("payload")
+                        if (
+                            obj.get("type") == "session_meta"
+                            and isinstance(payload, dict)
+                            and payload.get("id")
+                        ):
+                            verified_session_meta += 1
+                            if str(payload.get("model_provider") or "") != target:
+                                rollout_mismatch += 1
+
+        if rollout_mismatch:
+            raise RuntimeError(
+                f"provider verification failed in rollout metadata: "
+                f"{rollout_mismatch} session_meta records differ"
+            )
+
+        integrity_after = conn.execute("PRAGMA integrity_check").fetchone()[0]
+        if integrity_after != "ok":
+            raise RuntimeError(
+                f"SQLite integrity_check failed after migration: {integrity_after}"
+            )
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        for path, backup_path in reversed(replaced):
+            if backup_path.exists():
+                os.replace(backup_path, path)
+        raise
+    finally:
+        for backup_path in backups:
+            try:
+                backup_path.unlink()
+            except FileNotFoundError:
+                pass
+
+finally:
+    for _, staged_path in staged:
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.writelines(out)
-                f.flush()
-                os.fsync(f.fileno())
-            shutil.copymode(path, tmp_name)
-            os.replace(tmp_name, path)
-            rollout_files_changed += 1
-        finally:
-            if os.path.exists(tmp_name):
-                os.unlink(tmp_name)
-
-integrity_after = conn.execute("PRAGMA integrity_check").fetchone()[0]
-conn.close()
-
-if integrity_after != "ok":
-    raise SystemExit(f"迁移后 SQLite integrity_check 失败: {integrity_after}")
+            staged_path.unlink()
+        except FileNotFoundError:
+            pass
+    conn.close()
 
 print()
 print("SQLite providers changed :", db_changed)
 print("rollout files scanned    :", rollout_files)
 print("rollout files changed    :", rollout_files_changed)
 print("session_meta changed     :", rollout_meta_changed)
-print("SQLite integrity         :", integrity_after)
+print("session_meta verified    :", verified_session_meta)
+print("provider parity          : OK")
+print("SQLite integrity         : ok")
 
 if rollout_before:
     print()
@@ -3745,10 +3847,16 @@ cmd_restore_all_history() {
     [[ "$rc" -eq 0 ]] || return "$rc"
 
     printf '\n'
-    cmd_migrate_history_to_current_provider
+    if ! cmd_migrate_history_to_current_provider; then
+        ui_fail "$(L 'Provider 迁移失败；已停止后续流程。修复前的完整备份仍保留。' 'Provider migration failed; the workflow has stopped. The pre-repair full backup is preserved.')"
+        return 1
+    fi
 
     printf '\n'
-    cmd_health
+    if ! cmd_health; then
+        ui_fail "$(L '迁移后的健康检查失败；不会自动打开聊天。' 'Post-migration health check failed; chats will not be opened automatically.')"
+        return 1
+    fi
 
     printf '\n'
     ui_ok "$(L "全部历史已恢复到当前中转站 $profile，正在打开聊天列表…" "All history is now attached to the active route $profile. Opening the chat list…")"
