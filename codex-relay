@@ -3526,8 +3526,8 @@ cmd_repair_history_auto() {
         YES|yes|Yes|确认|confirm|CONFIRM)
             ;;
         *)
-            ui_info "$(L '已取消一键修复，没有停止 Codex，也没有修改聊天数据库。' 'One-click repair cancelled. Codex was not stopped and the history database was not modified.')"
-            return 0
+            ui_info "$(L '已取消，没有停止 Codex，也没有修改聊天数据库。' 'Cancelled. Codex was not stopped and the history database was not modified.')"
+            return 2
             ;;
     esac
 
@@ -3549,7 +3549,7 @@ cmd_repair_history_auto() {
 }
 
 cmd_restore_all_history() {
-    local profile before_health
+    local profile rc
 
     profile="$(current_profile)"
 
@@ -3561,9 +3561,12 @@ cmd_restore_all_history() {
 
     # Reuse the guarded repair flow. It performs confirmation, current-user
     # Codex stop, backup, conservative SQLite repair, reindex, and health check.
-    if ! cmd_repair_history_auto; then
-        return 1
+    cmd_repair_history_auto
+    rc=$?
+    if [[ "$rc" -eq 2 ]]; then
+        return 0
     fi
+    [[ "$rc" -eq 0 ]] || return "$rc"
 
     printf '\n'
     ui_ok "$(L '历史恢复 / 索引修复完成，正在打开全部聊天…' 'History restore / index repair completed. Opening all chats…')"
