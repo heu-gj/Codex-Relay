@@ -3561,8 +3561,11 @@ cmd_restore_all_history() {
 
     # Reuse the guarded repair flow. It performs confirmation, current-user
     # Codex stop, backup, conservative SQLite repair, reindex, and health check.
-    cmd_repair_history_auto
-    rc=$?
+    if cmd_repair_history_auto; then
+        rc=0
+    else
+        rc=$?
+    fi
     if [[ "$rc" -eq 2 ]]; then
         return 0
     fi
