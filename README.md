@@ -513,20 +513,27 @@ cr menu
         ↓
 扫描 sessions / archived_sessions
         ↓
-收集全部 provider 的 Session ID
-        ↓
 补回 SQLite 缺失 thread / 修复安全元数据
         ↓
-重建 session_index.jsonl
+读取当前 profile 的 P_PROVIDER
         ↓
-健康检查
+把全部历史 thread 的 model_provider
+迁移到当前 provider
+        ↓
+同步修改 rollout 的 session_meta.model_provider
+        ↓
+重建 / 检查 session_index 与 SQLite
         ↓
 自动打开全部聊天
 ```
 
-它会扫描当前 Linux 用户的**所有 provider 历史**。例如当前路由已经是 Nova，也会扫描以前 baibai、official 和自定义 provider 的 rollout。当前路由保持不变，旧聊天原有的 `model_provider` 不会被批量改成 Nova。
+它不写死 baibai、Nova 或任何自定义中转站。目标 provider 始终取**当前激活 profile 的 `P_PROVIDER`**；来源 provider 则直接从 SQLite / rollout 的真实历史中扫描。因此即使某个旧自定义中转站已经从 `relays.tsv` 删除，只要聊天 rollout 仍存在，也可以迁移到当前中转站继续使用。
 
-如果聊天库本身是健康的、只是 Codex 当前 provider 过滤导致旧聊天看不到，可以直接：
+例如当前路由是 Nova，历史里同时存在 `baibai`、旧 Nova provider、自定义 provider 或其他 provider，`restore-all` 会在完整备份后把这些历史的 `model_provider` 统一迁移到 Nova 当前的 provider。切到 baibai、official 或任意自定义 profile 后执行同一命令，则自动迁移到对应当前 provider。
+
+迁移只修改 provider 元数据，不修改消息正文、标题或工具记录。不同后端对旧会话中 provider-specific 状态的兼容性仍取决于目标服务。
+
+如果聊天库本身是健康的、只是想查看当前 Codex 能列出的全部聊天而**不修改 provider 元数据**，可以直接：
 
 ```bash
 cr all-history
@@ -668,7 +675,7 @@ Nova 的 Base URL 故意不自动追加 `/v1`。Relay 也不会写入不存在�
 | `cr health` | 历史健康检查 |
 | `cr backup` | 备份聊天历史 |
 | `cr reindex` | 重建索引，要求先停止 Codex |
-| `cr repair-history` | 备份 + 修复 + 重建索引 |\n| `cr restore-all` | 停止当前用户 Codex、备份、恢复全部历史并打开全部聊天 |\n| `cr all-history` | 不修数据库，直接打开当前用户全部 provider 聊天 |
+| `cr repair-history` | 备份 + 修复 + 重建索引 |\n| `cr restore-all` | 停止 Codex、备份、修复历史并迁移全部聊天到当前 provider 后打开列表 |\n| `cr all-history` | 不修数据库，直接打开当前用户全部 provider 聊天 |
 | `cr language zh/en` | 切换界面语言 |
 
 完整帮助：
