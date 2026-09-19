@@ -408,15 +408,39 @@ cr recover-menu
 
 The Session Picker shows timestamp, original provider, model, and title. A resumed chat can continue on its original provider or another selected route.
 
-### Restore all chat history
+### Cross-provider history recovery
+
+Codex currently has an upstream behavior where switching `model_provider` can make the normal history view show only threads for the active provider. The old threads usually still exist under `~/.codex/`.
+
+Use the Relay picker for cross-provider recovery:
+
+```bash
+cr recover-menu
+```
+
+or:
+
+```text
+cr menu
+→ Chat / History
+→ Cross-provider recovery
+```
+
+This view reads the current user's SQLite history directly without filtering to the active provider. When a thread is selected, Relay switches to the appropriate provider/auth before resuming it.
+
+`Codex native all sessions` uses `codex resume --all --include-non-interactive`. It is useful for native browsing, but cross-provider resume is still subject to Codex's own provider-definition and authentication rules.
+
+### Repair history database / index
 
 If rollout files still exist but SQLite/index metadata is missing or out of sync:
 
 ```text
 cr menu
 → Chat / History
-→ Restore all chat history
+→ Repair history database / index
 ```
+
+This repairs history storage consistency. It does **not** rewrite baibai threads as Nova and does not bypass Codex history filtering by the active `model_provider`.
 
 After confirmation, Codex-Relay:
 
@@ -638,9 +662,11 @@ No. It launches the normal system `codex` executable after preparing the current
 </details>
 
 <details>
-<summary><strong>Will switching providers delete old chats?</strong></summary>
+<summary><strong>Why do old chats appear to disappear after switching providers?</strong></summary>
 
-No. Chats remain under the current user's `~/.codex/`. Use the history-repair tools only when SQLite or index metadata is missing or inconsistent.
+Usually the data is still present. Codex may filter the normal history view by the active `model_provider`. Use `cr recover-menu` for an all-provider Relay view.
+
+Use the database/index repair action only when `cr health` shows that rollout, SQLite, or index data is actually inconsistent. Do not bulk-rewrite old thread `model_provider` values merely to make them visible.
 
 </details>
 
