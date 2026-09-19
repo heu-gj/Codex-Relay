@@ -457,20 +457,27 @@ back up SQLite / index / rollout
         ↓
 scan sessions / archived_sessions
         ↓
-collect session IDs across all providers
-        ↓
 restore missing SQLite threads / safe metadata
         ↓
-rebuild session_index.jsonl
+read P_PROVIDER from the active profile
         ↓
-run health checks
+migrate every historical thread's model_provider
+to the active provider
+        ↓
+rewrite matching rollout session_meta.model_provider
+        ↓
+rebuild / verify session_index and SQLite
         ↓
 open all chats
 ```
 
-All providers for the current Linux user are scanned. If the active route is Nova, historical baibai, official, and custom-provider rollouts are still included. The active route remains unchanged and old `model_provider` metadata is not bulk-rewritten.
+The migration is provider-agnostic. The target is always the active profile's `P_PROVIDER`; source providers are discovered directly from SQLite and rollout history. This means chats from an old custom relay can still be migrated even if that relay has already been removed from `relays.tsv`, as long as its rollout still exists.
 
-If the database is already healthy and chats are merely hidden by Codex's active-provider filtering, use:
+For example, when Nova is active, histories tagged with baibai, a legacy Nova provider ID, a custom provider, or another provider are migrated to Nova's current provider after a full backup. If baibai, official OpenAI, or any custom profile is active instead, the same command automatically targets that provider.
+
+Only provider metadata is rewritten; message bodies, titles, and tool records are left untouched. Compatibility of provider-specific session state still depends on the destination backend.
+
+If the database is already healthy and you only want to open the chats Codex can currently list **without rewriting provider metadata**, use:
 
 ```bash
 cr all-history
