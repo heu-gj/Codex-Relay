@@ -430,39 +430,55 @@ This view reads the current user's SQLite history directly without filtering to 
 
 `Codex native all sessions` uses `codex resume --all --include-non-interactive`. It is useful for native browsing, but cross-provider resume is still subject to Codex's own provider-definition and authentication rules.
 
-### Repair history database / index
+### Restore all chat history
 
-If rollout files still exist but SQLite/index metadata is missing or out of sync:
+To restore every recoverable chat for the current Linux user and immediately open the all-session picker, run:
+
+```bash
+cr restore-all
+```
+
+or use:
 
 ```text
 cr menu
 → Chat / History
-→ Repair history database / index
+→ Restore all chat history
 ```
 
-This repairs history storage consistency. It does **not** rewrite baibai threads as Nova and does not bypass Codex history filtering by the active `model_provider`.
-
-After confirmation, Codex-Relay:
+After confirmation, Codex-Relay runs the full workflow:
 
 ```text
-confirms no important work is running/queued
+confirm no important work is running/queued
         ↓
-stops current-user Codex
+stop current-user Codex
         ↓
-backs up history
+back up SQLite / index / rollout
         ↓
-scans sessions / archived_sessions
+scan sessions / archived_sessions
         ↓
-repairs SQLite / thread metadata
+collect session IDs across all providers
         ↓
-rebuilds session_index
+restore missing SQLite threads / safe metadata
         ↓
-runs health checks
+rebuild session_index.jsonl
+        ↓
+run health checks
+        ↓
+open all chats
 ```
 
-All providers are scanned. If your current route is Nova, historical baibai sessions can still be restored without changing the active route.
+All providers for the current Linux user are scanned. If the active route is Nova, historical baibai, official, and custom-provider rollouts are still included. The active route remains unchanged and old `model_provider` metadata is not bulk-rewritten.
 
-Conservative CLI mode:
+If the database is already healthy and chats are merely hidden by Codex's active-provider filtering, use:
+
+```bash
+cr all-history
+```
+
+This opens all chats without modifying the database.
+
+Conservative repair mode remains available:
 
 ```bash
 cr stop
@@ -592,7 +608,7 @@ Nova intentionally keeps its Base URL without automatically appending `/v1`. Cod
 | `cr health` | History health check |
 | `cr backup` | Back up history |
 | `cr reindex` | Rebuild history index |
-| `cr repair-history` | Backup + repair + reindex |
+| `cr repair-history` | Backup + repair + reindex |\n| `cr restore-all` | Stop current-user Codex, back up, restore all history, then open all chats |\n| `cr all-history` | Open all provider chats without repairing the database |
 | `cr language zh/en` | Change UI language |
 
 Full help:
