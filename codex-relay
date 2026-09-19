@@ -2663,6 +2663,8 @@ cmd_resume() {
 cmd_resume_all() {
     local profile="${1:-$(current_profile)}"
     write_config_for_profile "$profile"
+    ui_warn "$(L '这是 Codex 原生 resume --all。跨 provider 会话虽然可能出现在列表里，但恢复时仍受原 provider 定义/认证约束；安全恢复跨中转聊天请优先用 cr recover-menu。' 'This is native Codex resume --all. Cross-provider threads may appear, but resume still depends on the original provider definition/auth. Prefer cr recover-menu for safe cross-provider recovery.')"
+    printf '\n'
     cmd_run resume --all --include-non-interactive
 }
 
@@ -3499,13 +3501,14 @@ dashboard_refresh() {
 
 cmd_repair_history_auto() {
     clear || true
-    ui_header "$(L '一键修复聊天历史' 'ONE-CLICK HISTORY REPAIR')"
+    ui_header "$(L '修复聊天库 / 索引' 'REPAIR HISTORY DATABASE / INDEX')"
 
     local running confirm
     running="$(codex_process_count)"
 
     ui_warn "$(L '此操作会停止当前 Linux 用户的全部 Codex 服务/进程，并可能中断正在执行或排队的任务。' 'This will stop all Codex services/processes for the current Linux user and may interrupt running or queued work.')"
-    ui_info "$(L '将扫描并恢复当前用户所有 provider 的聊天记录到统一历史库/索引；不会只恢复某一个中转站的聊天。' 'All provider histories for the current user will be scanned and restored into the shared history database/index; this is not limited to one provider.')"
+    ui_info "$(L '将扫描当前用户所有 provider 的 rollout，并修复 SQLite / session_index 的缺失或损坏记录。' 'All provider rollouts for the current user will be scanned to repair missing or damaged SQLite / session_index records.')"
+    ui_warn "$(L '注意：此操作不会把 baibai 会话改成 Nova，也不会绕过 Codex 按当前 model_provider 过滤历史列表的行为。跨中转查看/恢复请使用 [3]。' 'This does not rewrite baibai threads as Nova and does not bypass Codex history filtering by the active model_provider. Use [3] for cross-provider recovery.')"
     ui_info "$(L "当前路由会保持为 $(current_profile)；恢复历史不会自动改写旧聊天的原 provider 元数据。" "The current route remains $(current_profile); restoring history does not rewrite the original provider metadata stored on old threads.")"
     ui_kv "$(L '检测到的 Codex 进程' 'detected Codex processes')" "$running"
     printf '\n'
@@ -3550,14 +3553,15 @@ cmd_menu_history() {
     while true; do
         clear || true
         ui_header "$(L '聊天历史' 'CHAT / HISTORY')"
+        ui_info "$(L '切换中转站后旧聊天可能被 Codex 按 model_provider 隐藏；数据通常仍在。跨中转查看/恢复请用 [3]。' 'After switching providers, Codex may hide old threads by model_provider even though data remains. Use [3] for cross-provider recovery.')"
         ui_menu_item "1" "$(L '最近聊天' 'Recent chats')" "$(L '最近 50 个会话' 'latest 50 threads')"
         ui_menu_item "2" "$(L '搜索聊天' 'Search chats')" ""
-        ui_menu_item "3" "$(L '继续单个聊天' 'Resume one chat')" "$(L '选择一条旧会话继续' 'pick one existing thread')"
-        ui_menu_item "4" "$(L '浏览全部聊天' 'Browse all chats')" "$(L '打开 Codex 全部会话选择器' 'open Codex all-thread picker')"
+        ui_menu_item "3" "$(L '跨中转恢复聊天' 'Cross-provider recovery')" "$(L 'Relay 列出全部 provider · 推荐' 'Relay lists all providers · recommended')"
+        ui_menu_item "4" "$(L 'Codex 原生全部会话' 'Codex native all sessions')" "$(L 'resume --all · 仅原生选择器' 'resume --all · native picker')"
         ui_menu_item "5" "$(L '健康检查' 'Health check')" "sessions · SQLite · index"
         ui_menu_item "6" "$(L '备份聊天历史' 'Backup history')" ""
         ui_menu_item "7" "$(L '重建索引' 'Rebuild index')" "$(L '要求先停止 Codex' 'Codex must be stopped')"
-        ui_menu_item "8" "$(L '一键恢复全部聊天记录' 'Restore all chat history')" "$(L '全部 provider · 停止 Codex → backup → repair → reindex' 'all providers · stop Codex → backup → repair → reindex')"
+        ui_menu_item "8" "$(L '修复聊天库 / 索引' 'Repair history database / index')" "$(L '数据缺失或索引异常时使用 · 不改变 provider 过滤' 'for missing/indexed data · does not change provider filtering')"
         ui_menu_item "0" "$(L '返回' 'Back')" ""
         printf '\n> '; read -r choice
         case "$choice" in
