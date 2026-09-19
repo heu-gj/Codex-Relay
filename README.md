@@ -488,7 +488,13 @@ Session Picker 会展示时间、原 provider、model 和标题，并允许选�
 
 ### 一键恢复全部聊天记录
 
-如果 rollout 还在，但 SQLite / session index 缺失或不同步：
+如果你的目标是“把当前用户所有还能找到的历史聊天都恢复回来，并马上进入全部聊天列表”，直接使用：
+
+```bash
+cr restore-all
+```
+
+或者：
 
 ```text
 cr menu
@@ -496,27 +502,39 @@ cr menu
 → [8] 一键恢复全部聊天记录
 ```
 
-确认后会自动执行：
+确认后会执行完整恢复链路：
 
 ```text
 确认没有重要运行/排队任务
         ↓
 停止当前用户 Codex
         ↓
-备份历史数据
+备份 SQLite / index / rollout
         ↓
 扫描 sessions / archived_sessions
         ↓
-修复 SQLite / thread 元数据
+收集全部 provider 的 Session ID
         ↓
-重建 session_index
+补回 SQLite 缺失 thread / 修复安全元数据
+        ↓
+重建 session_index.jsonl
         ↓
 健康检查
+        ↓
+自动打开全部聊天
 ```
 
-它会扫描当前用户**所有 provider 的历史**。例如当前路由已经是 Nova，也仍会恢复以前 baibai 的历史记录；当前路由不会因此被改回 baibai。
+它会扫描当前 Linux 用户的**所有 provider 历史**。例如当前路由已经是 Nova，也会扫描以前 baibai、official 和自定义 provider 的 rollout。当前路由保持不变，旧聊天原有的 `model_provider` 不会被批量改成 Nova。
 
-命令行保守模式：
+如果聊天库本身是健康的、只是 Codex 当前 provider 过滤导致旧聊天看不到，可以直接：
+
+```bash
+cr all-history
+```
+
+这只打开全部聊天，不修改数据库。
+
+命令行保守修复模式仍然保留：
 
 ```bash
 cr stop
@@ -650,7 +668,7 @@ Nova 的 Base URL 故意不自动追加 `/v1`。Relay 也不会写入不存在�
 | `cr health` | 历史健康检查 |
 | `cr backup` | 备份聊天历史 |
 | `cr reindex` | 重建索引，要求先停止 Codex |
-| `cr repair-history` | 备份 + 修复 + 重建索引 |
+| `cr repair-history` | 备份 + 修复 + 重建索引 |\n| `cr restore-all` | 停止当前用户 Codex、备份、恢复全部历史并打开全部聊天 |\n| `cr all-history` | 不修数据库，直接打开当前用户全部 provider 聊天 |
 | `cr language zh/en` | 切换界面语言 |
 
 完整帮助：
