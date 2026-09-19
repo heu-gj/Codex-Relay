@@ -2663,7 +2663,7 @@ cmd_resume() {
 cmd_resume_all() {
     local profile="${1:-$(current_profile)}"
     write_config_for_profile "$profile"
-    ui_warn "$(L '这是 Codex 原生 resume --all。跨 provider 会话虽然可能出现在列表里，但恢复时仍受原 provider 定义/认证约束；安全恢复跨中转聊天请优先用 cr recover-menu。' 'This is native Codex resume --all. Cross-provider threads may appear, but resume still depends on the original provider definition/auth. Prefer cr recover-menu for safe cross-provider recovery.')"
+    ui_info "$(L '正在打开当前用户全部 provider 的 Codex 会话。不会修改旧聊天的 model_provider。' 'Opening Codex sessions across all providers for the current user. Existing model_provider metadata is not rewritten.')"
     printf '\n'
     cmd_run resume --all --include-non-interactive
 }
@@ -3553,11 +3553,11 @@ cmd_menu_history() {
     while true; do
         clear || true
         ui_header "$(L '聊天历史' 'CHAT / HISTORY')"
-        ui_info "$(L '切换中转站后旧聊天可能被 Codex 按 model_provider 隐藏；数据通常仍在。跨中转查看/恢复请用 [3]。' 'After switching providers, Codex may hide old threads by model_provider even though data remains. Use [3] for cross-provider recovery.')"
+        ui_info "$(L '切换中转站后旧聊天可能被 Codex 按 model_provider 隐藏；数据通常仍在。[4] 一键看全部，[3] 精确选择恢复路由。' 'After switching providers, Codex may hide old threads by model_provider even though data remains. [4] opens all chats; [3] lets you choose the resume route precisely.')"
         ui_menu_item "1" "$(L '最近聊天' 'Recent chats')" "$(L '最近 50 个会话' 'latest 50 threads')"
         ui_menu_item "2" "$(L '搜索聊天' 'Search chats')" ""
-        ui_menu_item "3" "$(L '跨中转恢复聊天' 'Cross-provider recovery')" "$(L 'Relay 列出全部 provider · 推荐' 'Relay lists all providers · recommended')"
-        ui_menu_item "4" "$(L 'Codex 原生全部会话' 'Codex native all sessions')" "$(L 'resume --all · 仅原生选择器' 'resume --all · native picker')"
+        ui_menu_item "3" "$(L '精确恢复旧聊天' 'Precise cross-provider recovery')" "$(L 'Relay 列出全部 provider · 可选恢复路由' 'Relay lists all providers · choose resume route')"
+        ui_menu_item "4" "$(L '一键打开全部聊天' 'Open all chats in one step')" "$(L 'Codex resume --all · 不改历史元数据' 'Codex resume --all · no metadata rewrite')"
         ui_menu_item "5" "$(L '健康检查' 'Health check')" "sessions · SQLite · index"
         ui_menu_item "6" "$(L '备份聊天历史' 'Backup history')" ""
         ui_menu_item "7" "$(L '重建索引' 'Rebuild index')" "$(L '要求先停止 Codex' 'Codex must be stopped')"
@@ -3779,7 +3779,7 @@ ${UI_BOLD}History${UI_RESET}
   cr search KEYWORD
   cr recover-menu
   cr resume THREAD_ID [PROFILE]
-  cr resume-all [PROFILE]
+  cr resume-all [PROFILE]\n  cr all-history              Open all current-user provider chats\n  cr all-history              一键打开当前用户全部 provider 聊天
   cr health
   cr backup
   cr reindex                  Rebuild index (run cr stop first)
@@ -3913,7 +3913,7 @@ case "${1:-}" in
         shift; cmd_recover_menu "$@" ;;
     resume|recover)
         shift; cmd_resume "$@" ;;
-    resume-all)
+    resume-all|all-history|history-all)
         shift; cmd_resume_all "$@" ;;
     health|history-check)
         shift; cmd_health "$@" ;;
