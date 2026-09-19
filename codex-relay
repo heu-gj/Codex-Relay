@@ -3548,12 +3548,36 @@ cmd_repair_history_auto() {
     cmd_repair_history
 }
 
+cmd_restore_all_history() {
+    local profile before_health
+
+    profile="$(current_profile)"
+
+    clear || true
+    ui_header "$(L '一键恢复全部聊天记录' 'RESTORE ALL CHAT HISTORY')"
+    ui_info "$(L '目标：把当前 Linux 用户 sessions / archived_sessions 中仍存在的全部历史会话恢复进 SQLite / session_index，然后打开 Codex 全部会话列表。' 'Goal: restore every existing session under this Linux user’s sessions / archived_sessions into SQLite / session_index, then open the Codex all-session picker.')"
+    ui_info "$(L "当前路由保持为 $profile；不会把旧聊天的 model_provider 批量改成当前中转站。" "The active route remains $profile; old model_provider metadata will not be bulk-rewritten to the current provider.")"
+    printf '\n'
+
+    # Reuse the guarded repair flow. It performs confirmation, current-user
+    # Codex stop, backup, conservative SQLite repair, reindex, and health check.
+    if ! cmd_repair_history_auto; then
+        return 1
+    fi
+
+    printf '\n'
+    ui_ok "$(L '历史恢复 / 索引修复完成，正在打开全部聊天…' 'History restore / index repair completed. Opening all chats…')"
+    sleep 0.4
+
+    cmd_resume_all "$profile"
+}
+
 cmd_menu_history() {
     local choice keyword
     while true; do
         clear || true
         ui_header "$(L '聊天历史' 'CHAT / HISTORY')"
-        ui_info "$(L '切换中转站后旧聊天可能被 Codex 按 model_provider 隐藏；数据通常仍在。[4] 一键看全部，[3] 精确选择恢复路由。' 'After switching providers, Codex may hide old threads by model_provider even though data remains. [4] opens all chats; [3] lets you choose the resume route precisely.')"
+        ui_info "$(L '聊天都还在但只是看不到：用 [4]。要扫描并恢复所有历史到数据库/索引：用 [8]。单条跨中转恢复：用 [3]。' 'If chats still exist but are only hidden, use [4]. To scan and restore all history into the database/index, use [8]. For one cross-provider thread, use [3].')"
         ui_menu_item "1" "$(L '最近聊天' 'Recent chats')" "$(L '最近 50 个会话' 'latest 50 threads')"
         ui_menu_item "2" "$(L '搜索聊天' 'Search chats')" ""
         ui_menu_item "3" "$(L '精确恢复旧聊天' 'Precise cross-provider recovery')" "$(L 'Relay 列出全部 provider · 可选恢复路由' 'Relay lists all providers · choose resume route')"
@@ -3561,7 +3585,7 @@ cmd_menu_history() {
         ui_menu_item "5" "$(L '健康检查' 'Health check')" "sessions · SQLite · index"
         ui_menu_item "6" "$(L '备份聊天历史' 'Backup history')" ""
         ui_menu_item "7" "$(L '重建索引' 'Rebuild index')" "$(L '要求先停止 Codex' 'Codex must be stopped')"
-        ui_menu_item "8" "$(L '修复聊天库 / 索引' 'Repair history database / index')" "$(L '数据缺失或索引异常时使用 · 不改变 provider 过滤' 'for missing/indexed data · does not change provider filtering')"
+        ui_menu_item "8" "$(L '一键恢复全部聊天记录' 'Restore all chat history')" "$(L '停止 Codex → 备份 → 扫描全部 provider → 修复 → 重建索引 → 打开全部聊天' 'stop Codex → backup → scan all providers → repair → reindex → open all chats')"
         ui_menu_item "0" "$(L '返回' 'Back')" ""
         printf '\n> '; read -r choice
         case "$choice" in
@@ -3576,7 +3600,7 @@ cmd_menu_history() {
             5) clear || true; cmd_health; ui_pause ;;
             6) clear || true; cmd_backup; ui_pause ;;
             7) clear || true; cmd_reindex || true; ui_pause ;;
-            8) cmd_repair_history_auto || true; ui_pause ;;
+            8) cmd_restore_all_history || true ;;
             0|q|Q) return ;;
             *) ui_warn "$(L '无效选择' 'Invalid choice')"; sleep 0.5 ;;
         esac
@@ -3784,6 +3808,7 @@ ${UI_BOLD}History${UI_RESET}
   cr backup
   cr reindex                  Rebuild index (run cr stop first)
   cr repair-history           Backup + repair SQLite/path/provider + reindex (run cr stop first)
+  cr restore-all              Stop current-user Codex + backup + restore all history + open all chats
 
 ${UI_BOLD}Language${UI_RESET}
   cr language                 Show language
@@ -3846,7 +3871,8 @@ ${UI_BOLD}聊天历史${UI_RESET}
   cr health                   检查聊天库健康状态
   cr backup                   备份聊天
   cr reindex                  重建聊天索引（先 cr stop）
-  cr repair-history           一键备份 + 修 SQLite/路径/provider + 重建索引（先 cr stop）
+  cr repair-history           备份 + 修 SQLite/路径/provider + 重建索引（先 cr stop）
+  cr restore-all              停当前用户 Codex + 备份 + 恢复全部历史 + 打开全部聊天
 
 ${UI_BOLD}语言${UI_RESET}
   cr language                 查看当前语言
@@ -3923,6 +3949,8 @@ case "${1:-}" in
         shift; cmd_reindex "$@" ;;
     repair-history|repair)
         shift; cmd_repair_history "$@" ;;
+    restore-all|restore-history|history-restore-all)
+        shift; cmd_restore_all_history "$@" ;;
     language|lang)
         shift; cmd_language "$@" ;;
     "")
