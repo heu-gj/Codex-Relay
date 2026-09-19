@@ -2668,17 +2668,15 @@ cmd_resume() {
     echo "  use profile : $profile"
 
     write_config_for_profile "$profile"
-    load_profile "$profile"
-    cmd_run resume -m "$P_MODEL" "$tid"
+    cmd_run resume "$tid"
 }
 
 cmd_resume_all() {
     local profile="${1:-$(current_profile)}"
     write_config_for_profile "$profile"
-    load_profile "$profile"
-    ui_info "$(L '正在打开当前用户全部 provider 的 Codex 会话；继续会话时显式使用当前 profile 的模型 / provider / reasoning。' 'Opening Codex sessions across all providers; resumed chats explicitly use the active profile model / provider / reasoning settings.')"
+    ui_info "$(L '正在打开当前用户全部 provider 的 Codex 会话。不会修改旧聊天的 model_provider。' 'Opening Codex sessions across all providers for the current user. Existing model_provider metadata is not rewritten.')"
     printf '\n'
-    cmd_run resume -m "$P_MODEL" --all --include-non-interactive
+    cmd_run resume --all --include-non-interactive
 }
 
 history_picker_rows() {
@@ -3859,10 +3857,15 @@ cmd_restore_all_history() {
     fi
 
     printf '\n'
-    ui_ok "$(L "全部历史已恢复到当前中转站 $profile，正在打开聊天列表…" "All history is now attached to the active route $profile. Opening the chat list…")"
+    ui_ok "$(L "全部历史已恢复到当前中转站 $profile，正在用当前模型打开聊天列表…" "All history is now attached to the active route $profile. Opening the chat list with the active model…")"
     sleep 0.4
 
-    cmd_resume_all "$profile"
+    # Keep the public resume-all/all-history behavior unchanged. restore-all is
+    # the one path that explicitly asks Codex to continue migrated threads with
+    # the active profile settings instead of restoring an old thread model.
+    write_config_for_profile "$profile"
+    load_profile "$profile"
+    cmd_run resume -m "$P_MODEL" --all --include-non-interactive
 }
 
 cmd_menu_history() {
