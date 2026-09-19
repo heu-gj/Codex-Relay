@@ -3045,12 +3045,15 @@ cmd_repair_history() {
     echo "CODEX_HOME: $CODEX_DIR"
     echo
     echo "[1/4] 备份当前聊天数据库、索引和 rollout..."
-    cmd_backup
+    if ! cmd_backup; then
+        ui_fail "$(L '聊天历史备份失败，已取消修复；未进入数据库写入阶段。' 'History backup failed; repair was cancelled before database writes began.')"
+        return 1
+    fi
 
     echo
     echo "[2/4] 检查并修复 SQLite thread 元数据..."
 
-    python3 - "$CODEX_DIR" <<'REPAIRPY'
+    if ! python3 - "$CODEX_DIR" <<'REPAIRPY'
 from pathlib import Path
 from datetime import datetime, timezone
 import json
@@ -3385,6 +3388,10 @@ if errors:
     for e in errors[:10]:
         print("  WARN:", e)
 REPAIRPY
+    then
+        ui_fail "$(L 'SQLite / rollout 修复阶段失败，已停止后续恢复流程。可从刚创建的历史备份恢复。' 'SQLite / rollout repair failed; the recovery workflow has stopped. The newly created history backup is available for rollback.')"
+        return 1
+    fi
 
     echo
     echo "[3/4] 重新检查聊天库一致性..."
