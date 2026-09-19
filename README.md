@@ -721,9 +721,11 @@ NO_COLOR=1 cr menu
 </details>
 
 <details>
-<summary><strong>从 baibai 切到 Nova 后，以前的聊天还在吗？</strong></summary>
+<summary><strong>从 baibai 切到 Nova 后，为什么以前的聊天看起来不见了？</strong></summary>
 
-在。聊天保存在当前用户自己的 `~/.codex/`。如果索引异常，可使用 `cr menu → 聊天历史 → 一键恢复全部聊天记录`。
+通常不是数据丢失，而是 Codex 的历史列表按当前 `model_provider` 过滤。请先用 `cr recover-menu` 或 `cr menu → 聊天历史 → [3] 跨中转恢复聊天` 查看全部 provider 的本地会话。
+
+只有 `cr health` 显示 SQLite / index 与 rollout 不一致时，才需要使用 `[8] 修复聊天库 / 索引`。不要为了“让列表显示”而批量把旧线程的 `model_provider` 改成当前 provider。
 
 </details>
 
