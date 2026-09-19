@@ -2620,7 +2620,17 @@ PY
 }
 
 profile_for_old_provider() {
-    local provider="$1"
+    local provider="$1" current
+    current="$(current_profile)"
+
+    if profile_exists "$current"; then
+        load_profile "$current"
+        if [[ "$P_PROVIDER" == "$provider" ]]; then
+            echo "$current"
+            return
+        fi
+    fi
+
     case "$provider" in
         baibai) echo "baibai" ;;
         OpenAI) echo "nova" ;;
@@ -2628,8 +2638,9 @@ profile_for_old_provider() {
         *)
             local hit
             hit="$(awk -F '\t' -v p="$provider" '$2==p {print $1; exit}' "$REGISTRY")"
-            [[ -n "$hit" ]] && echo "$hit" || echo "$(current_profile)"
-            ;;    esac
+            [[ -n "$hit" ]] && echo "$hit" || echo "$current"
+            ;;
+    esac
 }
 
 cmd_resume() {
@@ -3034,12 +3045,15 @@ cmd_repair_history() {
     echo "CODEX_HOME: $CODEX_DIR"
     echo
     echo "[1/4] 备份当前聊天数据库、索引和 rollout..."
-    cmd_backup
+    if ! cmd_backup; then
+        ui_fail "$(L '聊天历史备份失败，已取消修复；未进入数据库写入阶段。' 'History backup failed; repair was cancelled before database writes began.')"
+        return 1
+    fi
 
     echo
     echo "[2/4] 检查并修复 SQLite thread 元数据..."
 
-    python3 - "$CODEX_DIR" <<'REPAIRPY'
+    if ! python3 - "$CODEX_DIR" <<'REPAIRPY'
 from pathlib import Path
 from datetime import datetime, timezone
 import json
@@ -3374,6 +3388,10 @@ if errors:
     for e in errors[:10]:
         print("  WARN:", e)
 REPAIRPY
+    then
+        ui_fail "$(L 'SQLite / rollout 修复阶段失败，已停止后续恢复流程。可从刚创建的历史备份恢复。' 'SQLite / rollout repair failed; the recovery workflow has stopped. The newly created history backup is available for rollback.')"
+        return 1
+    fi
 
     echo
     echo "[3/4] 重新检查聊天库一致性..."
@@ -3500,6 +3518,8 @@ dashboard_refresh() {
 }
 
 cmd_repair_history_auto() {
+    local mode="${1:-repair}"
+
     clear || true
     ui_header "$(L '修复聊天库 / 索引' 'REPAIR HISTORY DATABASE / INDEX')"
 
@@ -3508,8 +3528,17 @@ cmd_repair_history_auto() {
 
     ui_warn "$(L '此操作会停止当前 Linux 用户的全部 Codex 服务/进程，并可能中断正在执行或排队的任务。' 'This will stop all Codex services/processes for the current Linux user and may interrupt running or queued work.')"
     ui_info "$(L '将扫描当前用户所有 provider 的 rollout，并修复 SQLite / session_index 的缺失或损坏记录。' 'All provider rollouts for the current user will be scanned to repair missing or damaged SQLite / session_index records.')"
-    ui_warn "$(L '注意：此操作不会把 baibai 会话改成 Nova，也不会绕过 Codex 按当前 model_provider 过滤历史列表的行为。跨中转查看/恢复请使用 [3]。' 'This does not rewrite baibai threads as Nova and does not bypass Codex history filtering by the active model_provider. Use [3] for cross-provider recovery.')"
-    ui_info "$(L "当前路由会保持为 $(current_profile)；恢复历史不会自动改写旧聊天的原 provider 元数据。" "The current route remains $(current_profile); restoring history does not rewrite the original provider metadata stored on old threads.")"
+    if [[ "$mode" == "restore-all" ]]; then
+        local restore_profile restore_provider
+        restore_profile="$(current_profile)"
+        load_profile "$restore_profile"
+        restore_provider="$P_PROVIDER"
+        ui_warn "$(L "修复完成后，会把全部本地聊天的 model_provider 统一迁移到当前中转站：$restore_profile ($restore_provider)。" "After repair, all local chats will have model_provider migrated to the active route: $restore_profile ($restore_provider).")"
+        ui_info "$(L '只修改历史的 provider 元数据；消息正文、标题和工具记录不会被改写。当前 config.toml / auth.json 保持当前中转站。' 'Only provider metadata is rewritten; message bodies, titles, and tool records are untouched. The current config.toml / auth.json remain on the active route.')"
+    else
+        ui_warn "$(L '注意：此操作不会批量改写旧聊天的 model_provider。跨中转精确恢复请使用 [3]。' 'This operation does not bulk-rewrite old model_provider values. Use [3] for precise cross-provider recovery.')"
+        ui_info "$(L "当前路由会保持为 $(current_profile)；修复聊天库不会自动迁移 provider。" "The current route remains $(current_profile); repairing the history database does not automatically migrate providers.")"
+    fi
     ui_kv "$(L '检测到的 Codex 进程' 'detected Codex processes')" "$running"
     printf '\n'
 
@@ -3548,20 +3577,271 @@ cmd_repair_history_auto() {
     cmd_repair_history
 }
 
+cmd_migrate_history_to_current_provider() {
+    local profile target_provider
+    profile="$(current_profile)"
+    load_profile "$profile"
+    target_provider="$P_PROVIDER"
+
+    [[ -n "$target_provider" ]] || die "$(L '当前 profile 没有有效的 provider ID' 'The active profile has no valid provider ID')"
+    [[ -f "$CODEX_DIR/state_5.sqlite" ]] || die "state_5.sqlite 不存在"
+    require_codex_stopped || return 1
+    need python3
+
+    ui_header "$(L '迁移聊天到当前中转站' 'MIGRATE CHATS TO ACTIVE PROVIDER')"
+    ui_kv "profile" "$profile"
+    ui_kv "provider" "$target_provider"
+    ui_kv "model" "$P_MODEL"
+    ui_kv "endpoint" "$P_URL"
+    printf '\n'
+
+    python3 - "$CODEX_DIR" "$target_provider" <<'MIGRATEPY'
+from pathlib import Path
+from collections import Counter
+import json
+import os
+import shutil
+import sqlite3
+import sys
+import tempfile
+
+home = Path(sys.argv[1]).expanduser().resolve()
+target = sys.argv[2]
+db = home / "state_5.sqlite"
+
+conn = sqlite3.connect(db)
+conn.row_factory = sqlite3.Row
+
+integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
+if integrity != "ok":
+    conn.close()
+    raise SystemExit(f"ABORT: SQLite integrity_check != ok: {integrity}")
+
+columns = {r[1] for r in conn.execute("PRAGMA table_info(threads)")}
+if "model_provider" not in columns:
+    conn.close()
+    raise SystemExit("threads.model_provider 不存在，无法迁移")
+
+rows = conn.execute(
+    "SELECT id, COALESCE(model_provider,'') AS model_provider FROM threads"
+).fetchall()
+before = Counter(str(r["model_provider"] or "") for r in rows)
+db_changed = sum(1 for r in rows if str(r["model_provider"] or "") != target)
+
+print("=== Provider migration preview ===")
+print("target provider      :", target)
+print("SQLite threads       :", len(rows))
+if before:
+    for provider, count in before.most_common():
+        label = provider or "<empty>"
+        action = "keep" if provider == target else f"-> {target}"
+        print(f"  {label:24} {count:6}  {action}")
+
+# Stage every rollout rewrite before touching SQLite or replacing any source file.
+staged = []
+rollout_files = 0
+rollout_files_changed = 0
+rollout_meta_changed = 0
+rollout_before = Counter()
+
+try:
+    for dirname in ("sessions", "archived_sessions"):
+        root = home / dirname
+        if not root.exists():
+            continue
+
+        for path in root.rglob("rollout-*.jsonl"):
+            rollout_files += 1
+            fd, tmp_name = tempfile.mkstemp(
+                prefix=".codex-relay-provider-stage-",
+                suffix=".tmp",
+                dir=str(path.parent),
+                text=True,
+            )
+            changed = False
+            try:
+                with path.open("r", encoding="utf-8") as src, os.fdopen(
+                    fd, "w", encoding="utf-8"
+                ) as dst:
+                    for raw in src:
+                        has_newline = raw.endswith("\n")
+                        body = raw[:-1] if has_newline else raw
+                        try:
+                            obj = json.loads(body)
+                        except Exception:
+                            dst.write(raw)
+                            continue
+
+                        payload = obj.get("payload")
+                        if (
+                            obj.get("type") == "session_meta"
+                            and isinstance(payload, dict)
+                            and payload.get("id")
+                        ):
+                            old = str(payload.get("model_provider") or "")
+                            rollout_before[old] += 1
+                            if old != target:
+                                payload["model_provider"] = target
+                                obj["payload"] = payload
+                                line = json.dumps(
+                                    obj, ensure_ascii=False, separators=(",", ":")
+                                )
+                                if has_newline:
+                                    line += "\n"
+                                dst.write(line)
+                                changed = True
+                                rollout_meta_changed += 1
+                                continue
+
+                        dst.write(raw)
+
+                    dst.flush()
+                    os.fsync(dst.fileno())
+
+                if changed:
+                    shutil.copymode(path, tmp_name)
+                    staged.append((path, Path(tmp_name)))
+                    rollout_files_changed += 1
+                else:
+                    os.unlink(tmp_name)
+            except Exception:
+                try:
+                    os.unlink(tmp_name)
+                except OSError:
+                    pass
+                raise
+
+    # Keep a per-file rollback copy while the SQLite transaction is open.
+    replaced = []
+    backups = []
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "UPDATE threads SET model_provider=? WHERE COALESCE(model_provider,'')<>?",
+            (target, target),
+        )
+
+        for path, staged_path in staged:
+            fd, backup_name = tempfile.mkstemp(
+                prefix=".codex-relay-provider-original-",
+                suffix=".tmp",
+                dir=str(path.parent),
+            )
+            os.close(fd)
+            backup_path = Path(backup_name)
+            shutil.copy2(path, backup_path)
+            backups.append(backup_path)
+
+            os.replace(staged_path, path)
+            replaced.append((path, backup_path))
+
+        db_mismatch = conn.execute(
+            "SELECT COUNT(*) FROM threads WHERE COALESCE(model_provider,'')<>?",
+            (target,),
+        ).fetchone()[0]
+        if db_mismatch:
+            raise RuntimeError(
+                f"provider verification failed in SQLite: {db_mismatch} rows differ"
+            )
+
+        rollout_mismatch = 0
+        verified_session_meta = 0
+        for dirname in ("sessions", "archived_sessions"):
+            root = home / dirname
+            if not root.exists():
+                continue
+            for path in root.rglob("rollout-*.jsonl"):
+                with path.open("r", encoding="utf-8") as src:
+                    for raw in src:
+                        try:
+                            obj = json.loads(raw)
+                        except Exception:
+                            continue
+                        payload = obj.get("payload")
+                        if (
+                            obj.get("type") == "session_meta"
+                            and isinstance(payload, dict)
+                            and payload.get("id")
+                        ):
+                            verified_session_meta += 1
+                            if str(payload.get("model_provider") or "") != target:
+                                rollout_mismatch += 1
+
+        if rollout_mismatch:
+            raise RuntimeError(
+                f"provider verification failed in rollout metadata: "
+                f"{rollout_mismatch} session_meta records differ"
+            )
+
+        integrity_after = conn.execute("PRAGMA integrity_check").fetchone()[0]
+        if integrity_after != "ok":
+            raise RuntimeError(
+                f"SQLite integrity_check failed after migration: {integrity_after}"
+            )
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        for path, backup_path in reversed(replaced):
+            if backup_path.exists():
+                os.replace(backup_path, path)
+        raise
+    finally:
+        for backup_path in backups:
+            try:
+                backup_path.unlink()
+            except FileNotFoundError:
+                pass
+
+finally:
+    for _, staged_path in staged:
+        try:
+            staged_path.unlink()
+        except FileNotFoundError:
+            pass
+    conn.close()
+
+print()
+print("SQLite providers changed :", db_changed)
+print("rollout files scanned    :", rollout_files)
+print("rollout files changed    :", rollout_files_changed)
+print("session_meta changed     :", rollout_meta_changed)
+print("session_meta verified    :", verified_session_meta)
+print("provider parity          : OK")
+print("SQLite integrity         : ok")
+
+if rollout_before:
+    print()
+    print("=== Rollout provider distribution before migration ===")
+    for provider, count in rollout_before.most_common():
+        label = provider or "<empty>"
+        action = "keep" if provider == target else f"-> {target}"
+        print(f"  {label:24} {count:6}  {action}")
+MIGRATEPY
+
+    ui_ok "$(L "全部本地聊天已迁移到当前 provider: $target_provider" "All local chats were migrated to the active provider: $target_provider")"
+}
+
 cmd_restore_all_history() {
-    local profile rc
+    local profile target_provider rc
 
     profile="$(current_profile)"
+    load_profile "$profile"
+    target_provider="$P_PROVIDER"
 
     clear || true
     ui_header "$(L '一键恢复全部聊天记录' 'RESTORE ALL CHAT HISTORY')"
-    ui_info "$(L '目标：把当前 Linux 用户 sessions / archived_sessions 中仍存在的全部历史会话恢复进 SQLite / session_index，然后打开 Codex 全部会话列表。' 'Goal: restore every existing session under this Linux user’s sessions / archived_sessions into SQLite / session_index, then open the Codex all-session picker.')"
-    ui_info "$(L "当前路由保持为 $profile；不会把旧聊天的 model_provider 批量改成当前中转站。" "The active route remains $profile; old model_provider metadata will not be bulk-rewritten to the current provider.")"
+    ui_info "$(L '目标：恢复当前用户全部本地聊天，并把所有历史 provider 迁移到当前中转站，使它们能在当前路由的 Codex 历史列表中出现并继续。' 'Goal: restore all local chats and migrate every historical provider to the active route so the chats appear in the current Codex history list and can be continued there.')"
+    ui_kv "$(L '当前 profile' 'active profile')" "$profile"
+    ui_kv "$(L '目标 provider' 'target provider')" "$target_provider"
+    ui_kv "endpoint" "$P_URL"
+    ui_warn "$(L '执行前会完整备份；迁移只改 model_provider 元数据，不改消息正文。不同后端对旧会话状态的兼容性仍由对应服务决定。' 'A full backup is created first. Migration only rewrites model_provider metadata, not message bodies. Compatibility of old session state still depends on the target backend.')"
     printf '\n'
 
-    # Reuse the guarded repair flow. It performs confirmation, current-user
-    # Codex stop, backup, conservative SQLite repair, reindex, and health check.
-    if cmd_repair_history_auto; then
+    # Guarded repair first: stop Codex, back up all history, recover missing
+    # SQLite/index records, then migrate every recovered thread to the active
+    # provider. The current config.toml/auth.json are not switched here.
+    if cmd_repair_history_auto restore-all; then
         rc=0
     else
         rc=$?
@@ -3572,10 +3852,27 @@ cmd_restore_all_history() {
     [[ "$rc" -eq 0 ]] || return "$rc"
 
     printf '\n'
-    ui_ok "$(L '历史恢复 / 索引修复完成，正在打开全部聊天…' 'History restore / index repair completed. Opening all chats…')"
+    if ! cmd_migrate_history_to_current_provider; then
+        ui_fail "$(L 'Provider 迁移失败；已停止后续流程。修复前的完整备份仍保留。' 'Provider migration failed; the workflow has stopped. The pre-repair full backup is preserved.')"
+        return 1
+    fi
+
+    printf '\n'
+    if ! cmd_health; then
+        ui_fail "$(L '迁移后的健康检查失败；不会自动打开聊天。' 'Post-migration health check failed; chats will not be opened automatically.')"
+        return 1
+    fi
+
+    printf '\n'
+    ui_ok "$(L "全部历史已恢复到当前中转站 $profile，正在用当前模型打开聊天列表…" "All history is now attached to the active route $profile. Opening the chat list with the active model…")"
     sleep 0.4
 
-    cmd_resume_all "$profile"
+    # Keep the public resume-all/all-history behavior unchanged. restore-all is
+    # the one path that explicitly asks Codex to continue migrated threads with
+    # the active profile settings instead of restoring an old thread model.
+    write_config_for_profile "$profile"
+    load_profile "$profile"
+    cmd_run resume -m "$P_MODEL" --all --include-non-interactive
 }
 
 cmd_menu_history() {
@@ -3591,7 +3888,7 @@ cmd_menu_history() {
         ui_menu_item "5" "$(L '健康检查' 'Health check')" "sessions · SQLite · index"
         ui_menu_item "6" "$(L '备份聊天历史' 'Backup history')" ""
         ui_menu_item "7" "$(L '重建索引' 'Rebuild index')" "$(L '要求先停止 Codex' 'Codex must be stopped')"
-        ui_menu_item "8" "$(L '一键恢复全部聊天记录' 'Restore all chat history')" "$(L '停止 Codex → 备份 → 扫描全部 provider → 修复 → 重建索引 → 打开全部聊天' 'stop Codex → backup → scan all providers → repair → reindex → open all chats')"
+        ui_menu_item "8" "$(L '一键恢复全部聊天记录' 'Restore all chat history')" "$(L '备份 → 修复 → 全部 provider 迁移到当前中转站 → 打开聊天' 'backup → repair → migrate every provider to active route → open chats')"
         ui_menu_item "0" "$(L '返回' 'Back')" ""
         printf '\n> '; read -r choice
         case "$choice" in
@@ -3814,7 +4111,7 @@ ${UI_BOLD}History${UI_RESET}
   cr backup
   cr reindex                  Rebuild index (run cr stop first)
   cr repair-history           Backup + repair SQLite/path/provider + reindex (run cr stop first)
-  cr restore-all              Stop current-user Codex + backup + restore all history + open all chats
+  cr restore-all              Backup + repair + migrate all chat providers to current route + open chats
 
 ${UI_BOLD}Language${UI_RESET}
   cr language                 Show language
@@ -3878,7 +4175,7 @@ ${UI_BOLD}聊天历史${UI_RESET}
   cr backup                   备份聊天
   cr reindex                  重建聊天索引（先 cr stop）
   cr repair-history           备份 + 修 SQLite/路径/provider + 重建索引（先 cr stop）
-  cr restore-all              停当前用户 Codex + 备份 + 恢复全部历史 + 打开全部聊天
+  cr restore-all              备份 + 修复 + 全部历史迁移到当前中转站 + 打开聊天
 
 ${UI_BOLD}语言${UI_RESET}
   cr language                 查看当前语言
